@@ -217,28 +217,37 @@ class GPIBInterface(_GPIBMixin, MessageBasedResource):
             Return value of the library call.
 
         """
+        board_number = None
         for resource in resources:
             if not isinstance(resource, GPIBInstrument):
-                raise ValueError("%r is not a GPIBInstrument", resource)
+                raise ValueError(f"{repr(resource)} is not a GPIBInstrument")
 
-            # TODO: check that all resources are in the same board.
+            device_board = resource.interface_number
+            if board_number is not None and board_number != device_board:
+                raise ValueError(
+                    f"{repr(resource)} is attached to board {device_board} but "
+                    f"another device is attached to board {board_number}"
+                )
+            elif board_number is None:
+                board_number = device_board
 
         if not self.is_controller_in_charge:
             self.send_ifc()
 
-        command = [
-            0x40,
-            0x20 + 31,
-        ]  # broadcast TAD#0 and "UNL" (don't listen) to all devices
+        # Broadcast board as talker and unlisten to all devices
+        # Based on VISA address format for INTFC we cannot have a secondary address
+        command = GPIBCommand.talker(self.primary_address) + GPIBCommand.unlisten
 
         for resource in resources:
             # tell device GPIB::11 to listen
-            command.append(0x20 + resource.primary_address)
+            command += GPIBCommand.listener(
+                resource.primary_address
+            ) + GPIBCommand.secondary_address(resource.secondary_address)
 
         # send GET ('group execute trigger')
-        command.append(0x08)
+        command += GPIBCommand.group_execute_trigger
 
-        return self.send_command(bytes(command))
+        return self.send_command(command)
 
     def send_command(self, data: bytes) -> Tuple[int, constants.StatusCode]:
         """Write GPIB command bytes on the bus.
