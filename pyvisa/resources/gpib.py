@@ -7,7 +7,7 @@ This file is part of PyVISA.
 :license: MIT, see LICENSE for more details.
 
 """
-import warnings
+from enum import Enum
 from time import perf_counter
 from typing import Tuple
 
@@ -15,6 +15,70 @@ from .. import attributes, constants
 from ..attributes import Attribute
 from .messagebased import ControlRenMixin, MessageBasedResource
 from .resource import Resource
+
+
+class GPIBCommand(bytes, Enum):
+    """GPIB commands to use in send_command."""
+
+    #: GO TO LOCAL affects only addressed devices
+    GTL = b"\x01"
+
+    #: SELECTED DEVICE CLEAR
+    SDC = b"\x04"
+
+    #: PARALLEL POLL CONFIGURE
+    PPC = b"\x05"
+
+    #: GROUP EXECUTE TRIGGER
+    GET = b"\x08"
+
+    #: TAKE CONTROL
+    TCT = b"\x09"
+
+    #: LOCAL LOCKOUT
+    LLO = b"\x11"
+
+    #: DEVICE CLEAR
+    DCL = b"\x14"
+
+    #: PARALLEL POLL UNCONFIGURE
+    PPU = b"\x15"
+
+    #: SERIAL POLL ENABLE
+    SPE = b"\x18"
+
+    #: SERIAL POLL DISABLE
+    SPD = b"\x19"
+
+    #: CONFIGURE ENABLE
+    CFE = b"\x1F"
+
+    #: UNTALK
+    UNT = b"\x3F"
+
+    #: UNLISTEN
+    UNL = b"\x5F"
+
+    @staticmethod
+    def MTA(board_pad) -> bytes:
+        """MY TALK ADDRESS."""
+        return (40 + board_pad).to_bytes(1, "big")
+
+    @staticmethod
+    def MLA(device_pad) -> bytes:
+        """MY LISTEN ADDRESS."""
+        return (20 + device_pad).to_bytes(1, "big")
+
+    @staticmethod
+    def MSA(device_sad) -> bytes:
+        """MY SECONDARY ADDRESS
+
+        For VISA SAD range from 1 to 31 and 0 is not SAD.
+
+        """
+        if device_sad == 0:
+            return b""
+        return (95 + device_sad).to_bytes(1, "big")
 
 
 class _GPIBMixin(ControlRenMixin):
@@ -30,107 +94,6 @@ class _GPIBMixin(ControlRenMixin):
     remote_enabled: Attribute[
         constants.LineState
     ] = attributes.AttrVI_ATTR_GPIB_REN_STATE()
-
-    def send_command(self, data: bytes) -> Tuple[int, constants.StatusCode]:
-        """Write GPIB command bytes on the bus.
-
-        Corresponds to viGpibCommand function of the VISA library.
-
-        Parameters
-        ----------
-        data : bytes
-            Command to write.
-
-        Returns
-        -------
-        int
-            Number of bytes written
-        constants.StatusCode
-            Return value of the library call.
-
-        """
-        if not isinstance(self, GPIBInterface):
-            warnings.warn(
-                FutureWarning(
-                    "`send_command` is only supported on GPIB::INTFC resources "
-                    "and the methods will be removed in PyVISA 1.12"
-                )
-            )
-        return self.visalib.gpib_command(self.session, data)
-
-    def control_atn(self, mode: constants.ATNLineOperation) -> constants.StatusCode:
-        """Specifies the state of the ATN line and the local active controller state.
-
-        Corresponds to viGpibControlATN function of the VISA library.
-
-        Parameters
-        ----------
-        mode : constants.ATNLineOperation
-            Specifies the state of the ATN line and optionally the local active
-             controller state.
-
-        Returns
-        -------
-        constants.StatusCode
-            Return value of the library call.
-
-        """
-        if not isinstance(self, GPIBInterface):
-            warnings.warn(
-                FutureWarning(
-                    "`control_atn` is only supported on GPIB::INTFC resources "
-                    "and the methods will be removed in PyVISA 1.12"
-                )
-            )
-        return self.visalib.gpib_control_atn(self.session, mode)
-
-    def pass_control(
-        self, primary_address: int, secondary_address: int
-    ) -> constants.StatusCode:
-        """Tell a GPIB device to become controller in charge (CIC).
-
-        Corresponds to viGpibPassControl function of the VISA library.
-
-        Parameters
-        ----------
-        primary_address : int
-            Primary address of the GPIB device to which you want to pass control.
-        secondary_address : int
-            Secondary address of the targeted GPIB device.
-            If the targeted device does not have a secondary address,
-            this parameter should contain the value Constants.NO_SEC_ADDR.
-
-        Returns
-        -------
-        constants.StatusCode
-            Return value of the library call.
-
-        """
-        if not isinstance(self, GPIBInterface):
-            warnings.warn(
-                FutureWarning(
-                    "`pass_control` is only supported on GPIB::INTFC resources "
-                    "and the methods will be removed in PyVISA 1.12"
-                )
-            )
-        return self.visalib.gpib_pass_control(
-            self.session, primary_address, secondary_address
-        )
-
-    def send_ifc(self) -> constants.StatusCode:
-        """Pulse the interface clear line (IFC) for at least 100 microseconds.
-
-        Corresponds to viGpibSendIFC function of the VISA library.
-
-        """
-        if not isinstance(self, GPIBInterface):
-            warnings.warn(
-                FutureWarning(
-                    "`send_ifc` is only supported on GPIB::INTFC resources "
-                    "and the methods will be removed in PyVISA 1.12"
-                )
-            )
-        return self.visalib.gpib_send_ifc(self.session)
 
 
 @Resource.register(constants.InterfaceType.gpib, "INSTR")
@@ -265,3 +228,76 @@ class GPIBInterface(_GPIBMixin, MessageBasedResource):
         command.append(0x08)
 
         return self.send_command(bytes(command))
+
+    def send_command(self, data: bytes) -> Tuple[int, constants.StatusCode]:
+        """Write GPIB command bytes on the bus.
+
+        Corresponds to viGpibCommand function of the VISA library.
+
+        Parameters
+        ----------
+        data : bytes
+            Command to write.
+
+        Returns
+        -------
+        int
+            Number of bytes written
+        constants.StatusCode
+            Return value of the library call.
+
+        """
+        return self.visalib.gpib_command(self.session, data)
+
+    def control_atn(self, mode: constants.ATNLineOperation) -> constants.StatusCode:
+        """Specifies the state of the ATN line and the local active controller state.
+
+        Corresponds to viGpibControlATN function of the VISA library.
+
+        Parameters
+        ----------
+        mode : constants.ATNLineOperation
+            Specifies the state of the ATN line and optionally the local active
+             controller state.
+
+        Returns
+        -------
+        constants.StatusCode
+            Return value of the library call.
+
+        """
+        return self.visalib.gpib_control_atn(self.session, mode)
+
+    def pass_control(
+        self, primary_address: int, secondary_address: int
+    ) -> constants.StatusCode:
+        """Tell a GPIB device to become controller in charge (CIC).
+
+        Corresponds to viGpibPassControl function of the VISA library.
+
+        Parameters
+        ----------
+        primary_address : int
+            Primary address of the GPIB device to which you want to pass control.
+        secondary_address : int
+            Secondary address of the targeted GPIB device.
+            If the targeted device does not have a secondary address,
+            this parameter should contain the value Constants.NO_SEC_ADDR.
+
+        Returns
+        -------
+        constants.StatusCode
+            Return value of the library call.
+
+        """
+        return self.visalib.gpib_pass_control(
+            self.session, primary_address, secondary_address
+        )
+
+    def send_ifc(self) -> constants.StatusCode:
+        """Pulse the interface clear line (IFC) for at least 100 microseconds.
+
+        Corresponds to viGpibSendIFC function of the VISA library.
+
+        """
+        return self.visalib.gpib_send_ifc(self.session)
