@@ -3,13 +3,13 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import contextlib
 import time
-import warnings
 from functools import update_wrapper
 from typing import (
     Any,
@@ -66,24 +66,6 @@ class WaitResponse:
         self._visalib = visalib
         self.timed_out = timed_out
 
-    @property
-    def event_type(self) -> Optional[constants.EventType]:
-        warnings.warn(
-            "event_type is deprecated and will be removed in 1.12. "
-            "Use the event object instead.",
-            FutureWarning,
-        )
-        return self._event_type
-
-    @property
-    def context(self) -> Optional[VISAEventContext]:
-        warnings.warn(
-            "context is deprecated and will be removed in 1.12. "
-            "Use the event object instead to access the event attributes.",
-            FutureWarning,
-        )
-        return self._context
-
     def __del__(self) -> None:
         if self.event._context is not None:
             try:
@@ -139,7 +121,6 @@ class Resource(object):
         """
 
         def _internal(python_class):
-
             highlevel.ResourceManager.register_resource_class(
                 interface_type, resource_class, python_class
             )
@@ -204,7 +185,7 @@ class Resource(object):
     def __repr__(self) -> str:
         return "<%r(%r)>" % (self.__class__.__name__, self._resource_name)
 
-    def __enter__(self) -> "Resource":
+    def __enter__(self: T) -> T:
         return self
 
     def __exit__(self, *args) -> None:
@@ -227,10 +208,14 @@ class Resource(object):
     #: VISA attributes require the resource to be opened in order to get accessed.
     #: Please have a look at the attributes definition for more details
 
+    # VI_ATTR_RM_SESSION is not implemented as resource property,
+    # use .resource_manager.session instead
+    # resource_manager_session: Attribute[int] = attributes.AttrVI_ATTR_RM_SESSION()
+
     #: Interface type of the given session.
-    interface_type: Attribute[
-        constants.InterfaceType
-    ] = attributes.AttrVI_ATTR_INTF_TYPE()
+    interface_type: Attribute[constants.InterfaceType] = (
+        attributes.AttrVI_ATTR_INTF_TYPE()
+    )
 
     #: Board number for the given interface.
     interface_number: Attribute[int] = attributes.AttrVI_ATTR_INTF_NUM()
@@ -245,9 +230,9 @@ class Resource(object):
     implementation_version: Attribute[int] = attributes.AttrVI_ATTR_RSRC_IMPL_VERSION()
 
     #: Current locking state of the resource.
-    lock_state: Attribute[
-        constants.AccessModes
-    ] = attributes.AttrVI_ATTR_RSRC_LOCK_STATE()
+    lock_state: Attribute[constants.AccessModes] = (
+        attributes.AttrVI_ATTR_RSRC_LOCK_STATE()
+    )
 
     #: Version of the VISA specification to which the implementation is compliant.
     spec_version: Attribute[int] = attributes.AttrVI_ATTR_RSRC_SPEC_VERSION()

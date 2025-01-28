@@ -3,20 +3,37 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import contextlib
 import struct
 import time
 import warnings
-from typing import Any, Callable, Iterable, Iterator, Optional, Sequence, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    Optional,
+    Protocol,
+    Sequence,
+    Type,
+    Union,
+)
 
 from .. import attributes, constants, errors, logger, util
 from ..attributes import Attribute
 from ..highlevel import VisaLibraryBase
 from .resource import Resource
+
+
+class SupportsUpdate(Protocol):
+    """Type hint for a progress bar object"""
+
+    def update(self, size: int) -> None: ...
 
 
 class ControlRenMixin(object):
@@ -94,7 +111,6 @@ class MessageBasedResource(Resource):
 
     @read_termination.setter
     def read_termination(self, value: str) -> None:
-
         if value:
             # termination character, the rest is just used for verification
             # after each read operation.
@@ -189,7 +205,7 @@ class MessageBasedResource(Resource):
         if term:
             if message.endswith(term):
                 warnings.warn(
-                    "write message already ends with " "termination characters",
+                    "write message already ends with termination characters",
                     stacklevel=2,
                 )
             message += term
@@ -241,7 +257,7 @@ class MessageBasedResource(Resource):
 
         if term and message.endswith(term):
             warnings.warn(
-                "write message already ends with " "termination characters",
+                "write message already ends with termination characters",
                 stacklevel=2,
             )
 
@@ -300,7 +316,7 @@ class MessageBasedResource(Resource):
 
         if term and message.endswith(term):
             warnings.warn(
-                "write message already ends with " "termination characters",
+                "write message already ends with termination characters",
                 stacklevel=2,
             )
 
@@ -327,6 +343,7 @@ class MessageBasedResource(Resource):
         count: int,
         chunk_size: Optional[int] = None,
         break_on_termchar: bool = False,
+        monitoring_interface: Optional[SupportsUpdate] = None,
     ) -> bytes:
         """Read a certain number of bytes from the instrument.
 
@@ -341,6 +358,10 @@ class MessageBasedResource(Resource):
         break_on_termchar : bool, optional
             Should the reading stop when a termination character is encountered
             or when the message ends. Defaults to False.
+        monitoring_interface : SupportsUpdate Protocol, optional
+            Progress monitoring object with update() method that accepts the number
+            of bytes read. See the tqdm documentation (a progress bar package) for
+            more information.
 
         Returns
         -------
@@ -369,6 +390,8 @@ class MessageBasedResource(Resource):
                         status,
                     )
                     chunk, status = self.visalib.read(self.session, size)
+                    if monitoring_interface:
+                        monitoring_interface.update(len(chunk))
                     ret.extend(chunk)
                     left_to_read -= len(chunk)
                     if break_on_termchar and (
@@ -377,7 +400,7 @@ class MessageBasedResource(Resource):
                         break
             except errors.VisaIOError as e:
                 logger.debug(
-                    "%s - exception while reading: %s\n" "Buffer content: %r",
+                    "%s - exception while reading: %s\nBuffer content: %r",
                     self._resource_name,
                     e,
                     ret,
@@ -404,7 +427,11 @@ class MessageBasedResource(Resource):
         """
         return bytes(self._read_raw(size))
 
-    def _read_raw(self, size: Optional[int] = None):
+    def _read_raw(
+        self,
+        size: Optional[int] = None,
+        monitoring_interface: Optional[SupportsUpdate] = None,
+    ):
         """Read the unmodified string sent from the instrument to the computer.
 
         In contrast to read(), no termination characters are stripped.
@@ -414,6 +441,10 @@ class MessageBasedResource(Resource):
         size : Optional[int], optional
             The chunk size to use to perform the reading. Defaults to None,
             meaning the resource wide set value is set.
+        monitoring_interface : SupportsUpdate Protocol, optional
+            Progress monitoring object with update() method that accepts the number
+            of bytes read. See the tqdm documentation (a progress bar package) for
+            more information.
 
         Returns
         -------
@@ -440,10 +471,12 @@ class MessageBasedResource(Resource):
                         status,
                     )
                     chunk, status = self.visalib.read(self.session, size)
+                    if monitoring_interface:
+                        monitoring_interface.update(len(chunk))
                     ret.extend(chunk)
             except errors.VisaIOError as e:
                 logger.debug(
-                    "%s - exception while reading: %s\nBuffer " "content: %r",
+                    "%s - exception while reading: %s\nBuffer content: %r",
                     self._resource_name,
                     e,
                     ret,
@@ -468,7 +501,7 @@ class MessageBasedResource(Resource):
         ----------
         termination : Optional[str], optional
             Alternative character termination to use. If None, the value of
-            write_termination is used. Defaults to None.
+            read_termination is used. Defaults to None.
         encoding : Optional[str], optional
             Alternative encoding to use to turn bytes into str. If None, the
             value of encoding is used. Defaults to None.
@@ -493,7 +526,7 @@ class MessageBasedResource(Resource):
 
         if not message.endswith(termination):
             warnings.warn(
-                "read string doesn't end with " "termination characters", stacklevel=2
+                "read string doesn't end with termination characters", stacklevel=2
             )
             return message
 
@@ -539,6 +572,7 @@ class MessageBasedResource(Resource):
         expect_termination: bool = True,
         data_points: int = -1,
         chunk_size: Optional[int] = None,
+        monitoring_interface: Optional[SupportsUpdate] = None,
     ) -> Sequence[Union[int, float]]:
         """Read values from the device in binary format returning an iterable
         of values.
@@ -565,6 +599,10 @@ class MessageBasedResource(Resource):
         chunk_size : int, optional
             Size of the chunks to read from the device. Using larger chunks may
             be faster for large amount of data.
+        monitoring_interface : SupportsUpdate Protocol, optional
+            Progress monitoring object with update() method that accepts the number
+            of bytes read. See the tqdm documentation (a progress bar package) for
+            more information.
 
         Returns
         -------
@@ -572,7 +610,7 @@ class MessageBasedResource(Resource):
             Data read from the device.
 
         """
-        block = self._read_raw(chunk_size)
+        block = self._read_raw(chunk_size, monitoring_interface=monitoring_interface)
 
         if header_fmt == "ieee":
             offset, data_length = util.parse_ieee_block_header(block)
@@ -584,7 +622,7 @@ class MessageBasedResource(Resource):
             data_length = -1
         else:
             raise ValueError(
-                "Invalid header format. Valid options are 'ieee'," " 'empty', 'hp'"
+                "Invalid header format. Valid options are 'ieee', 'empty', 'hp'"
             )
 
         # Allow to support instrument such as the Keithley 2000 that do not
@@ -601,7 +639,11 @@ class MessageBasedResource(Resource):
         # Read all the data if we know what to expect.
         if data_length > 0:
             block.extend(
-                self.read_bytes(expected_length - len(block), chunk_size=chunk_size)
+                self.read_bytes(
+                    expected_length - len(block),
+                    chunk_size=chunk_size,
+                    monitoring_interface=monitoring_interface,
+                )
             )
         elif data_length == 0:
             pass
@@ -699,6 +741,7 @@ class MessageBasedResource(Resource):
         expect_termination: bool = True,
         data_points: int = 0,
         chunk_size: Optional[int] = None,
+        monitoring_interface: Optional[SupportsUpdate] = None,
     ) -> Sequence[Union[int, float]]:
         """Query the device for values in binary format returning an iterable
         of values.
@@ -730,6 +773,10 @@ class MessageBasedResource(Resource):
         chunk_size : int, optional
             Size of the chunks to read from the device. Using larger chunks may
             be faster for large amount of data.
+        monitoring_interface : SupportsUpdate Protocol, optional
+            Progress monitoring object with update() method that accepts the number
+            of bytes read. See the tqdm documentation (a progress bar package) for
+            more information.
 
         Returns
         -------
@@ -739,7 +786,7 @@ class MessageBasedResource(Resource):
         """
         if header_fmt not in ("ieee", "empty", "hp"):
             raise ValueError(
-                "Invalid header format. Valid options are 'ieee'," " 'empty', 'hp'"
+                "Invalid header format. Valid options are 'ieee', 'empty', 'hp'"
             )
 
         self.write(message)
@@ -756,6 +803,7 @@ class MessageBasedResource(Resource):
             expect_termination,
             data_points,
             chunk_size,
+            monitoring_interface,
         )
 
     def assert_trigger(self) -> None:
@@ -774,12 +822,10 @@ class MessageBasedResource(Resource):
 
     @contextlib.contextmanager
     def read_termination_context(self, new_termination: str) -> Iterator:
-        term = self.get_visa_attribute(constants.ResourceAttribute.termchar)
-        self.set_visa_attribute(
-            constants.ResourceAttribute.termchar, ord(new_termination[-1])
-        )
+        term = self.read_termination
+        self.read_termination = new_termination
         yield
-        self.set_visa_attribute(constants.ResourceAttribute.termchar, term)
+        self.read_termination = term
 
     def flush(self, mask: constants.BufferOperation) -> None:
         """Manually clears the specified buffers.

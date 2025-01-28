@@ -8,11 +8,13 @@ All data types that are defined by VPP-4.3.2.
 The module exports all data types including the pointer and array types.  This
 means "ViUInt32" and such.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import ctypes as _ctypes
+import sys
 
 from .cthelper import FUNCTYPE
 
@@ -29,7 +31,7 @@ def _type_pair(ctypes_type):
 
 
 def _type_triplet(ctypes_type):
-    return _type_pair(ctypes_type) + (_ctypes.POINTER(ctypes_type),)
+    return (*_type_pair(ctypes_type), _ctypes.POINTER(ctypes_type))
 
 
 ViUInt64, ViPUInt64, ViAUInt64 = _type_triplet(_ctypes.c_uint64)
@@ -104,14 +106,16 @@ ViConstString = _ctypes.POINTER(ViChar)
 # Part Two: Type Assignments for VISA only, see spec table 3.1.2.  The
 # difference to the above is of no significance in Python, so I use it here
 # only for easier synchronisation with the spec.
+is_64bit = sys.maxsize > 2**32
 
 ViAccessMode, ViPAccessMode = _type_pair(ViUInt32)
-ViBusAddress, ViPBusAddress = _type_pair(ViUInt32)
+ViBusAddress, ViPBusAddress = _type_pair(ViUInt64) if is_64bit else _type_pair(ViUInt32)
 ViBusAddress64, ViPBusAddress64 = _type_pair(ViUInt64)
 
-ViBusSize = ViUInt32
+ViBusSize = ViUInt64 if is_64bit else ViUInt32
+ViBusSize64 = ViUInt64
 
-ViAttrState, ViPAttrState = _type_pair(ViUInt32)
+ViAttrState, ViPAttrState = _type_pair(ViUInt64) if is_64bit else _type_pair(ViUInt32)
 
 # The following is weird, taken from news:zn2ek2w2.fsf@python.net
 ViVAList = _ctypes.POINTER(_ctypes.c_char)

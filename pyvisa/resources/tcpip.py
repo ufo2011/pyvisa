@@ -3,10 +3,11 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 from .. import constants
 from .messagebased import ControlRenMixin, MessageBasedResource
 from .resource import Resource
@@ -18,6 +19,18 @@ class TCPIPInstrument(ControlRenMixin, MessageBasedResource):
 
     More complex resource names can be specified with the following grammar:
         TCPIP[board]::host address[::LAN device name][::INSTR]
+
+    Do not instantiate directly, use
+    :meth:`pyvisa.highlevel.ResourceManager.open_resource`.
+
+    """
+
+    pass
+
+
+@Resource.register(constants.InterfaceType.vicp, "INSTR")
+class VICPInstrument(ControlRenMixin, MessageBasedResource):
+    """Communicates with to devices of type VICP::host address[::INSTR]
 
     Do not instantiate directly, use
     :meth:`pyvisa.highlevel.ResourceManager.open_resource`.

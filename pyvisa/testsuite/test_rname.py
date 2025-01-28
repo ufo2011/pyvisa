@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Test test the resource name parsing.
+"""Test test the resource name parsing."""
 
-"""
 import logging
 from dataclasses import dataclass
 
@@ -52,7 +51,7 @@ class TestRegisteringSubclass(BaseTestCase):
             rname.register_subclass(rname.GPIBInstr)
         assert "Class already registered for" in e.exconly()
 
-    def test_handling_duplicate_default(self):
+    def test_handling_duplicate_default(self) -> None:
         """Test we enforce the unicity of default resource class per interface."""
         with pytest.raises(ValueError) as e:
 
@@ -97,7 +96,7 @@ class TestResourceName(BaseTestCase):
 
         # Test handling less than required parts
         with pytest.raises(rname.InvalidResourceName) as e:
-            rname.ResourceName.from_string("GPIB::INSTR")
+            rname.ResourceName.from_string("GPIB")
         assert "not enough parts" in e.exconly()
 
         # Test handling more than possible parts
@@ -164,9 +163,7 @@ class TestResourceName(BaseTestCase):
 class TestParsers(BaseTestCase):
     def _parse_test(self, rn, **kwargs):
         p = rname.ResourceName.from_string(rn)
-        r = dict(
-            (k, getattr(p, k)) for k in p._fields + ("interface_type", "resource_class")
-        )
+        r = {k: getattr(p, k) for k in (*p._fields, "interface_type", "resource_class")}
         r["canonical_resource_name"] = rname.assemble_canonical_name(**r)
         assert r == kwargs, rn
 
@@ -212,8 +209,8 @@ class TestParsers(BaseTestCase):
             resource_class="INSTR",
             board="0",
             primary_address="1",
-            secondary_address="0",
-            canonical_resource_name="GPIB0::1::0::INSTR",
+            secondary_address=None,
+            canonical_resource_name="GPIB0::1::INSTR",
         )
 
         self._parse_test(
@@ -222,8 +219,8 @@ class TestParsers(BaseTestCase):
             resource_class="INSTR",
             board="1",
             primary_address="1",
-            secondary_address="0",
-            canonical_resource_name="GPIB1::1::0::INSTR",
+            secondary_address=None,
+            canonical_resource_name="GPIB1::1::INSTR",
         )
 
         self._parse_test(
@@ -232,8 +229,8 @@ class TestParsers(BaseTestCase):
             resource_class="INSTR",
             board="1",
             primary_address="1",
-            secondary_address="0",
-            canonical_resource_name="GPIB1::1::0::INSTR",
+            secondary_address=None,
+            canonical_resource_name="GPIB1::1::INSTR",
         )
 
     def test_gpib_intf(self):
@@ -254,7 +251,6 @@ class TestParsers(BaseTestCase):
         )
 
     def test_tcpip_intr(self):
-
         self._parse_test(
             "TCPIP::192.168.134.102",
             interface_type="TCPIP",
@@ -293,6 +289,43 @@ class TestParsers(BaseTestCase):
             board="3",
             lan_device_name="inst3",
             canonical_resource_name="TCPIP3::1.2.3.4::inst3::INSTR",
+        )
+
+    def test_vicp_intr(self):
+        self._parse_test(
+            "VICP::192.168.134.102",
+            interface_type="VICP",
+            resource_class="INSTR",
+            host_address="192.168.134.102",
+            _unused=None,
+            canonical_resource_name="VICP::192.168.134.102::INSTR",
+        )
+
+        self._parse_test(
+            "VICP::dev.company.com::INSTR",
+            interface_type="VICP",
+            resource_class="INSTR",
+            host_address="dev.company.com",
+            _unused=None,
+            canonical_resource_name="VICP::dev.company.com::INSTR",
+        )
+
+        self._parse_test(
+            "VICP::dev.company.com::INSTR",
+            interface_type="VICP",
+            resource_class="INSTR",
+            host_address="dev.company.com",
+            _unused=None,
+            canonical_resource_name="VICP::dev.company.com::INSTR",
+        )
+
+        self._parse_test(
+            "VICP::1.2.3.4::INSTR",
+            interface_type="VICP",
+            resource_class="INSTR",
+            host_address="1.2.3.4",
+            _unused=None,
+            canonical_resource_name="VICP::1.2.3.4::INSTR",
         )
 
     def test_tcpip_socket(self):
@@ -428,7 +461,6 @@ class TestParsers(BaseTestCase):
 
 
 class TestFilters(BaseTestCase):
-
     CHECK_NO_WARNING = False
 
     run_list = (
@@ -439,7 +471,7 @@ class TestFilters(BaseTestCase):
         "USB0::0x1112::0x2223::0x1234::0::INSTR",
         "TCPIP0::192.168.0.1::inst1::INSTR",
         "TCPIP0::localhost::10001::SOCKET",
-        "GPIB9::7::65535::INSTR",
+        "GPIB9::7::1::INSTR",
         "ASRL11::INSTR",
         "ASRL2::INSTR",
         "GPIB::INTFC",
@@ -503,7 +535,10 @@ class TestFilters(BaseTestCase):
         self._test_filter2('?*{VI_ATTR_TCPIP_DEVICE_NAME == "inst1"}', 5)
         self._test_filter2("?*{VI_ATTR_TCPIP_PORT == 10001}", 6)
         self._test_filter2("?*{VI_ATTR_GPIB_PRIMARY_ADDR == 8}", 0)
-        self._test_filter2("?*{VI_ATTR_GPIB_SECONDARY_ADDR == 0}", 0)
+        self._test_filter2("?*{VI_ATTR_GPIB_SECONDARY_ADDR == 1}", 7)
+        self._test_filter2(
+            "?*{VI_ATTR_GPIB_SECONDARY_ADDR == %d}" % constants.VI_NO_SEC_ADDR, 0
+        )
         self._test_filter2("?*{VI_ATTR_PXI_CHASSIS == 1}", 11)
         self._test_filter2("?*{VI_ATTR_MAINFRAME_LA == 1}", 13, 14)
         self._test_filter2("?*{VI_ATTR_MAINFRAME_LA == 1 && VI_test == 1}", 13, 14)

@@ -3,13 +3,13 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import ctypes
 import logging
-import warnings
 from collections import OrderedDict
 from typing import (
     Any,
@@ -26,7 +26,12 @@ from typing import (
 
 from pyvisa import constants, errors, highlevel, logger, typing
 
-from ..util import LibraryPath, add_user_dll_extra_paths, read_user_library_path
+from ..util import (
+    DebugInfo,
+    LibraryPath,
+    add_user_dll_extra_paths,
+    read_user_library_path,
+)
 from . import functions, types
 from .cthelper import Library, find_library
 
@@ -105,11 +110,11 @@ class IVIVisaLibrary(highlevel.VisaLibraryBase):
         )
 
     @classmethod
-    def get_debug_info(cls) -> Dict[str, Union[str, Dict[str, Any]]]:
+    def get_debug_info(cls) -> DebugInfo:
         """Return a list of lines with backend info."""
         from pyvisa import __version__
 
-        d: Dict[str, Union[str, Dict[str, Any]]] = OrderedDict()
+        d: Dict[str, Any] = OrderedDict()
         d["Version"] = "%s (bundled with PyVISA)" % __version__
 
         paths = cls.get_library_paths()
@@ -117,7 +122,7 @@ class IVIVisaLibrary(highlevel.VisaLibraryBase):
         for ndx, visalib in enumerate(paths, 1):
             nfo: Dict[str, Union[str, List[str]]] = OrderedDict()
             nfo["found by"] = visalib.found_by
-            nfo["bitness"] = visalib.bitness
+            nfo["architecture"] = [str(a.value) for a in visalib.arch]
             try:
                 lib = cls(visalib)
                 sess, _ = lib.open_default_resource_manager()
@@ -140,9 +145,9 @@ class IVIVisaLibrary(highlevel.VisaLibraryBase):
             except Exception as e:
                 err_string = str(e)
                 if "No matching architecture" in err_string:
-                    nfo[
-                        "Could not get more info"
-                    ] = "Interpreter and library have different bitness."
+                    nfo["Could not get more info"] = (
+                        "Interpreter and library have different bitness."
+                    )
                 else:
                     nfo["Could not get more info"] = err_string.split("\n")
 
@@ -288,7 +293,7 @@ class IVIVisaLibrary(highlevel.VisaLibraryBase):
             )
         except errors.VisaIOError as e:
             if e.error_code == constants.StatusCode.error_resource_not_found:
-                return tuple()
+                return ()
             raise e
 
         try:
@@ -356,41 +361,3 @@ class IVIVisaLibrary(highlevel.VisaLibraryBase):
                 return buffer
 
         return None
-
-
-class NIVisaLibrary(IVIVisaLibrary):  # pragma: no cover
-    """Deprecated name for IVIVisaLibrary.
-
-    This class will be removed in 1.12
-
-    """
-
-    @staticmethod
-    def get_library_paths() -> Tuple[LibraryPath, ...]:
-        """Return a tuple of possible library paths."""
-        warnings.warn(
-            "NIVisaLibrary is deprecated and will be removed in 1.12. "
-            "Use IVIVisaLibrary instead.",
-            FutureWarning,
-        )
-        return IVIVisaLibrary.get_library_paths()
-
-    @classmethod
-    def get_debug_info(cls) -> Dict[str, Union[str, Dict[str, Any]]]:
-        """Return a list of lines with backend info."""
-        warnings.warn(
-            "NIVisaLibrary is deprecated and will be removed in 1.12. "
-            "Use IVIVisaLibrary instead.",
-            FutureWarning,
-        )
-        return IVIVisaLibrary.get_debug_info()
-
-    def __new__(  # type: ignore
-        cls: Type["NIVisaLibrary"], library_path: str = ""
-    ) -> highlevel.VisaLibraryBase:
-        warnings.warn(
-            "NIVisaLibrary is deprecated and will be removed in 1.12. "
-            "Use IVIVisaLibrary instead.",
-            FutureWarning,
-        )
-        return IVIVisaLibrary.__new__(cls, library_path)

@@ -3,10 +3,11 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import warnings
 from contextlib import contextmanager
 from ctypes import (
@@ -150,7 +151,7 @@ visa_functions = [
     "peek_64",
 ]
 
-__all__ = ["visa_functions", "set_signatures"] + visa_functions
+__all__ = ["visa_functions", "set_signatures", *visa_functions]
 
 VI_SPEC_VERSION = 0x00300000
 
@@ -1181,7 +1182,6 @@ def install_handler(
                 )
 
     with set_user_handle_type(library, converted_user_handle):
-
         if ctwrapper.WRAP_HANDLER:
             # Wrap the handler to provide a non-wrapper specific interface
             def handler_wrapper(
@@ -1191,9 +1191,11 @@ def install_handler(
                     ctype_session.value,
                     ctype_event_type,
                     ctype_event_context.value,
-                    ctype_user_handle.contents
-                    if ctype_user_handle
-                    else ctype_user_handle,
+                    (
+                        ctype_user_handle.contents
+                        if ctype_user_handle
+                        else ctype_user_handle
+                    ),
                 )
                 return 0
 
@@ -2096,7 +2098,7 @@ def parse_resource_extended(library, session, resource_name):
         ResourceInfo(
             constants.InterfaceType(interface_type.value),
             interface_board_number.value,
-            *res
+            *res,
         ),
         ret,
     )
