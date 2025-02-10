@@ -3,10 +3,11 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import functools
 import inspect
 import io
@@ -18,7 +19,11 @@ import subprocess
 import sys
 import warnings
 from collections import OrderedDict
+from enum import Enum
+from pathlib import Path
+from types import ModuleType
 from typing import (
+    AbstractSet,
     Any,
     Callable,
     Dict,
@@ -36,8 +41,11 @@ from typing_extensions import Literal
 
 from . import constants, logger
 
+np: Optional[ModuleType]
 try:
-    import numpy as np  # type: ignore
+    import numpy
+
+    np = numpy
 except ImportError:
     np = None
 
@@ -102,6 +110,9 @@ def read_user_library_path() -> Optional[str]:
         return None
 
 
+_ADDED_DLL_PATHS: AbstractSet[str] = set()
+
+
 def add_user_dll_extra_paths() -> Optional[List[str]]:
     """Add paths to search for .dll dependencies on Windows.
 
@@ -122,8 +133,7 @@ def add_user_dll_extra_paths() -> Optional[List[str]]:
     """
     from configparser import ConfigParser, NoOptionError, NoSectionError
 
-    # os.add_dll_library_path has been added in Python 3.8
-    if sys.version_info >= (3, 8) and sys.platform == "win32":
+    if sys.platform == "win32":
         config_parser = ConfigParser()
         files = config_parser.read(
             [
@@ -141,7 +151,11 @@ def add_user_dll_extra_paths() -> Optional[List[str]]:
         try:
             dll_extra_paths = config_parser.get("Paths", "dll_extra_paths").split(";")
             for path in dll_extra_paths:
-                os.add_dll_directory(path)
+                if path not in _ADDED_DLL_PATHS:
+                    os.add_dll_directory(path)
+                    _ADDED_DLL_PATHS.add(path)
+                else:
+                    logger.debug("Path %r has already been added; skipping" % path)
             return dll_extra_paths
         except (NoOptionError, NoSectionError):
             logger.debug(
@@ -150,10 +164,57 @@ def add_user_dll_extra_paths() -> Optional[List[str]]:
             )
             return None
     else:
-        logger.debug(
-            "Not loading dll_extra_paths because we are not on Windows "
-            "or Python < 3.8"
-        )
+        logger.debug("Not loading dll_extra_paths because we are not on Windows")
+        return None
+
+
+class PEMachineType(Enum):
+    UNKNOWN = 0
+    I386 = 0x014C
+    R3000 = 0x0162
+    R4000 = 0x0166
+    R10000 = 0x0168
+    WCEMIPSV2 = 0x0169
+    ALPHA = 0x0184
+    SH3 = 0x01A2
+    SH3DSP = 0x01A3
+    SH3E = 0x01A4
+    SH4 = 0x01A6
+    SH5 = 0x01A8
+    ARM = 0x01C0
+    AARCH64 = 0xAA64
+    THUMB = 0x01C2
+    ARMNT = 0x01C4
+    AM33 = 0x01D3
+    POWERPC = 0x01F0
+    POWERPCFP = 0x01F1
+    IA64 = 0x0200
+    MIPS16 = 0x0266
+    ALPHA64 = 0x0284
+    MIPSFPU = 0x0366
+    MIPSFPU16 = 0x0466
+    TRICORE = 0x0520
+    CEF = 0x0CEF
+    EBC = 0x0EBC
+    AMD64 = 0x8664
+    M32R = 0x9041
+    CEE = 0xC0EE
+
+
+class ArchitectureType(Enum):
+    I386 = ("x86", 32)
+    X86_64 = ("x86", 64)
+    AARCH64 = ("arm", 64)
+
+    @classmethod
+    def from_platform_machine(cls, machine: str) -> Optional["ArchitectureType"]:
+        if machine == "i386" or machine == "i686":
+            return cls.I386
+        elif machine == "x86_64" or machine == "amd64":
+            return cls.X86_64
+        elif machine == "arm64" or machine == "aarch64":
+            return cls.AARCH64
+
         return None
 
 
@@ -166,8 +227,8 @@ class LibraryPath(str):
     #: Detection method employed to locate the library
     found_by: str
 
-    #: Architectural information (32, ) or (64, ) or (32, 64)
-    _arch: Optional[Tuple[int, ...]] = None
+    #: Architectural information
+    _arch: Optional[List[ArchitectureType]] = None
 
     def __new__(
         cls: Type["LibraryPath"], path: str, found_by: str = "auto"
@@ -179,36 +240,15 @@ class LibraryPath(str):
         return obj
 
     @property
-    def arch(self) -> Tuple[int, ...]:
+    def arch(self) -> List[ArchitectureType]:
         """Architecture of the library."""
         if self._arch is None:
             try:
-                self._arch = get_arch(self.path)
+                self._arch = get_arch(Path(self.path))
             except Exception:
-                self._arch = tuple()
+                self._arch = []
 
         return self._arch
-
-    @property
-    def is_32bit(self) -> Union[bool, Literal["n/a"]]:
-        """Is the library 32 bits."""
-        if not self.arch:
-            return "n/a"
-        return 32 in self.arch
-
-    @property
-    def is_64bit(self) -> Union[bool, Literal["n/a"]]:
-        """Is the library 64 bits."""
-        if not self.arch:
-            return "n/a"
-        return 64 in self.arch
-
-    @property
-    def bitness(self) -> str:
-        """Bitness of the library."""
-        if not self.arch:
-            return "n/a"
-        return ", ".join(str(a) for a in self.arch)
 
 
 def cleanup_timeout(timeout: Optional[Union[int, float]]) -> int:
@@ -226,40 +266,6 @@ def cleanup_timeout(timeout: Optional[Union[int, float]]) -> int:
         timeout = int(timeout)
 
     return timeout
-
-
-def warn_for_invalid_kwargs(keyw, allowed_keys):  # pragma: no cover
-    warnings.warn("warn_for_invalid_kwargs will be removed in 1.12", FutureWarning)
-    for key in keyw.keys():
-        if key not in allowed_keys:
-            warnings.warn('Keyword argument "%s" unknown' % key, stacklevel=3)
-
-
-def filter_kwargs(keyw, selected_keys):  # pragma: no cover
-    warnings.warn("warn_for_invalid_kwargs will be removed in 1.12", FutureWarning)
-    result = {}
-    for key, value in keyw.items():
-        if key in selected_keys:
-            result[key] = value
-    return result
-
-
-def split_kwargs(keyw, self_keys, parent_keys, warn=True):  # pragma: no cover
-    warnings.warn("warn_for_invalid_kwargs will be removed in 1.12", FutureWarning)
-    self_kwargs = dict()
-    parent_kwargs = dict()
-    self_keys = set(self_keys)
-    parent_keys = set(parent_keys)
-    all_keys = self_keys | parent_keys
-    for key, value in keyw.items():
-        if warn and key not in all_keys:
-            warnings.warn('Keyword argument "%s" unknown' % key, stacklevel=3)
-        if key in self_keys:
-            self_kwargs[key] = value
-        if key in parent_keys:
-            parent_kwargs[key] = value
-
-    return self_kwargs, parent_kwargs
 
 
 _converters: Dict[str, Callable[[str], Any]] = {
@@ -332,6 +338,7 @@ def from_ascii_block(
         and isinstance(separator, str)
         and converter in _np_converters
     ):
+        assert np  # for typing
         return np.fromstring(ascii_data, _np_converters[converter], sep=separator)
 
     if isinstance(converter, str):
@@ -477,7 +484,7 @@ def parse_ieee_block_header(
 def parse_hp_block_header(
     block: Union[bytes, bytearray],
     is_big_endian: bool,
-    length_before_block: int = None,
+    length_before_block: Optional[int] = None,
     raise_on_late_block: bool = False,
 ) -> Tuple[int, int]:
     """Parse the header of a HP block.
@@ -684,6 +691,7 @@ def from_binary_block(
     endianess = ">" if is_big_endian else "<"
 
     if _use_numpy_routines(container):
+        assert np  # for typing
         return np.frombuffer(block, endianess + datatype, array_length, offset)
 
     fullfmt = "%s%d%s" % (endianess, array_length, datatype)
@@ -700,7 +708,7 @@ def from_binary_block(
 
 
 def to_binary_block(
-    iterable: Sequence[Union[int, float]],
+    iterable: Union[bytes, bytearray, Sequence[Union[int, float]]],
     header: Union[str, bytes],
     datatype: BINARY_DATATYPES,
     is_big_endian: bool,
@@ -724,12 +732,27 @@ def to_binary_block(
         Binary block of data preceded by the specified header
 
     """
-    array_length = len(iterable)
-    endianess = ">" if is_big_endian else "<"
-    fullfmt = "%s%d%s" % (endianess, array_length, datatype)
-
     if isinstance(header, str):
-        header = bytes(header, "ascii")
+        header = header.encode("ascii")
+
+    if isinstance(iterable, (bytes, bytearray)):
+        if datatype not in "sbB":
+            warnings.warn(
+                "Using the formats 's', 'p', 'b' or 'B' is more efficient when "
+                "directly writing bytes",
+                UserWarning,
+            )
+        else:
+            return header + iterable
+
+    endianess = ">" if is_big_endian else "<"
+
+    if _use_numpy_routines(type(iterable)):
+        assert np and isinstance(iterable, np.ndarray)  # For typing
+        return header + iterable.astype(endianess + datatype).tobytes()
+
+    array_length = len(iterable)
+    fullfmt = "%s%d%s" % (endianess, array_length, datatype)
 
     if datatype in ("s", "p"):
         block = struct.pack(fullfmt, iterable)
@@ -805,7 +828,14 @@ def to_hp_block(
     return to_binary_block(iterable, header, datatype, is_big_endian)
 
 
-def get_system_details(backends: bool = True) -> Dict[str, str]:
+# The actual value would be:
+# DebugInfo = Union[List[str], Dict[str, Union[str, DebugInfo]]]
+DebugInfo = Union[List[str], Dict[str, Any]]
+
+
+def get_system_details(
+    backends: bool = True,
+) -> Dict[str, Union[str, Dict[str, DebugInfo]]]:
     """Return a dictionary with information about the system."""
     buildno, builddate = platform.python_build()
     if sys.maxunicode == 65535:
@@ -814,11 +844,17 @@ def get_system_details(backends: bool = True) -> Dict[str, str]:
     else:
         # UCS4 build (most recent Linux distros)
         unitype = "UCS4"
-    bits, linkage = platform.architecture()
+    machine_info = platform.machine()
+    maybe_architecture = ArchitectureType.from_platform_machine(machine_info)
+    if maybe_architecture:
+        architecture_str = str(maybe_architecture.value)
+    else:
+        architecture_str = machine_info
 
     from . import __version__
 
-    d = {
+    backend_details: Dict[str, DebugInfo] = OrderedDict()
+    d: Dict[str, Union[str, dict]] = {
         "platform": platform.platform(),
         "processor": platform.processor(),
         "executable": sys.executable,
@@ -828,9 +864,9 @@ def get_system_details(backends: bool = True) -> Dict[str, str]:
         "buildno": buildno,
         "builddate": builddate,
         "unicode": unitype,
-        "bits": bits,
+        "architecture": architecture_str,
         "pyvisa": __version__,
-        "backends": OrderedDict(),
+        "backends": backend_details,
     }
 
     if backends:
@@ -843,16 +879,16 @@ def get_system_details(backends: bool = True) -> Dict[str, str]:
             try:
                 cls = highlevel.get_wrapper_class(backend)
             except Exception as e:
-                d["backends"][backend] = [
+                backend_details[backend] = [
                     "Could not instantiate backend",
                     "-> %s" % str(e),
                 ]
                 continue
 
             try:
-                d["backends"][backend] = cls.get_debug_info()
+                backend_details[backend] = cls.get_debug_info()
             except Exception as e:
-                d["backends"][backend] = [
+                backend_details[backend] = [
                     "Could not obtain debug info",
                     "-> %s" % str(e),
                 ]
@@ -860,7 +896,9 @@ def get_system_details(backends: bool = True) -> Dict[str, str]:
     return d
 
 
-def system_details_to_str(d: Dict[str, str], indent: str = "") -> str:
+def system_details_to_str(
+    d: Dict[str, Union[str, Dict[str, DebugInfo]]], indent: str = ""
+) -> str:
     """Convert the system details to a str.
 
     System details can be obtained by `get_system_details`.
@@ -877,7 +915,7 @@ def system_details_to_str(d: Dict[str, str], indent: str = "") -> str:
         "   Executable:     %s" % d.get("executable", "n/a"),
         "   Version:        %s" % d.get("python", "n/a"),
         "   Compiler:       %s" % d.get("compiler", "n/a"),
-        "   Bits:           %s" % d.get("bits", "n/a"),
+        "   Architecture:   %s" % d.get("architecture", "n/a"),
         "   Build:          %s (#%s)"
         % (d.get("builddate", "n/a"), d.get("buildno", "n/a")),
         "   Unicode:        %s" % d.get("unicode", "n/a"),
@@ -935,7 +973,7 @@ def get_debug_info(to_screen: Literal[False]) -> str:
     pass
 
 
-def get_debug_info(to_screen=True):
+def get_debug_info(to_screen: bool = True):
     """Get the PyVISA debug information."""
     out = system_details_to_str(get_system_details())
     if not to_screen:
@@ -943,52 +981,7 @@ def get_debug_info(to_screen=True):
     print(out)
 
 
-def pip_install(package):  # pragma: no cover
-    warnings.warn("warn_for_invalid_kwargs will be removed in 1.12", FutureWarning)
-    try:
-        import pip  # type: ignore
-
-        return pip.main(["install", package])
-    except ImportError:
-        print(system_details_to_str(get_system_details()))
-        raise RuntimeError("Please install pip to continue.")
-
-
-machine_types = {
-    0: "UNKNOWN",
-    0x014C: "I386",
-    0x0162: "R3000",
-    0x0166: "R4000",
-    0x0168: "R10000",
-    0x0169: "WCEMIPSV2",
-    0x0184: "ALPHA",
-    0x01A2: "SH3",
-    0x01A3: "SH3DSP",
-    0x01A4: "SH3E",
-    0x01A6: "SH4",
-    0x01A8: "SH5",
-    0x01C0: "ARM",
-    0x01C2: "THUMB",
-    0x01C4: "ARMNT",
-    0x01D3: "AM33",
-    0x01F0: "POWERPC",
-    0x01F1: "POWERPCFP",
-    0x0200: "IA64",
-    0x0266: "MIPS16",
-    0x0284: "ALPHA64",
-    # 0x0284: 'AXP64', # same
-    0x0366: "MIPSFPU",
-    0x0466: "MIPSFPU16",
-    0x0520: "TRICORE",
-    0x0CEF: "CEF",
-    0x0EBC: "EBC",
-    0x8664: "AMD64",
-    0x9041: "M32R",
-    0xC0EE: "CEE",
-}
-
-
-def get_shared_library_arch(filename: str) -> str:
+def get_shared_library_arch(filename: Union[str, Path]) -> PEMachineType:
     """Get the architecture of shared library."""
     with io.open(filename, "rb") as fp:
         dos_headers = fp.read(64)
@@ -1007,35 +1000,99 @@ def get_shared_library_arch(filename: str) -> str:
         if sig != b"PE":
             raise Exception("Not a PE executable")
 
-        return machine_types.get(machine, "UNKNOWN")
+        try:
+            return PEMachineType(machine)
+        except ValueError:
+            return PEMachineType.UNKNOWN
 
 
-def get_arch(filename: str) -> Tuple[int, ...]:
+def get_arch(filename: Union[str, Path]) -> List[ArchitectureType]:
     """Get the architecture of the platform."""
     this_platform = sys.platform
     if this_platform.startswith("win"):
         machine_type = get_shared_library_arch(filename)
-        if machine_type == "I386":
-            return (32,)
-        elif machine_type in ("IA64", "AMD64"):
-            return (64,)
+        if machine_type == PEMachineType.I386:
+            return [ArchitectureType.I386]
+        elif machine_type == PEMachineType.AMD64:
+            return [ArchitectureType.X86_64]
+        elif machine_type == PEMachineType.AARCH64:
+            return [ArchitectureType.AARCH64]
         else:
-            return ()
-    elif this_platform not in ("linux2", "linux3", "linux", "darwin"):
+            return []
+    elif this_platform not in ("linux", "darwin"):
         raise OSError("Unsupported platform: %s" % this_platform)
-
     res = subprocess.run(["file", filename], capture_output=True)
     out = res.stdout.decode("ascii")
-    ret = []
-    if this_platform.startswith("linux"):
-        if "32-bit" in out:
-            ret.append(32)
-        if "64-bit" in out:
-            ret.append(64)
-    else:  # darwin
-        if "(for architecture i386)" in out:
-            ret.append(32)
-        if "(for architecture x86_64)" in out:
-            ret.append(64)
 
-    return tuple(ret)
+    if this_platform.startswith("linux"):
+        # Example outputs:
+        #   i386:
+        #       /usr/bin/python: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV)
+        #   x86_64:
+        #       /usr/bin/python3.10: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked
+        #   aarch64:
+        #       /usr/bin/python3.9: ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), dynamically linked
+        if "80386" in out:
+            return [ArchitectureType.I386]
+        if "x86-64" in out:
+            return [ArchitectureType.X86_64]
+        if "aarch64" in out:
+            return [ArchitectureType.AARCH64]
+
+        return []
+    else:  # darwin
+        # universal binary, i386 and x86_64:
+        #   /usr/bin/grep: Mach-O universal binary with 2 architectures
+        #   /usr/bin/grep (for architecture x86_64):    Mach-O 64-bit executable x86_64
+        #   /usr/bin/grep (for architecture i386):      Mach-O executable i386
+        # universal binary, x86_64 and aarch64:
+        #   /usr/bin/grep: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64e:Mach-O 64-bit executable arm64e]
+        #   /usr/bin/grep (for architecture x86_64):	Mach-O 64-bit executable x86_64
+        #   /usr/bin/grep (for architecture arm64e):	Mach-O 64-bit executable arm64e
+        # single-arch binary, aarch64:
+        #   /opt/homebrew/bin/rg: Mach-O 64-bit executable arm64
+        archs: List[ArchitectureType] = []
+
+        if "executable i386" in out:
+            archs.append(ArchitectureType.I386)
+        if "executable x86_64" in out:
+            archs.append(ArchitectureType.X86_64)
+        if "executable arm64" in out:
+            archs.append(ArchitectureType.AARCH64)
+
+        return archs
+
+
+def message_size(
+    num_points: int,
+    datatype: BINARY_DATATYPES = "f",
+    header_format: Literal["ieee", "hp", "empty"] = "ieee",
+) -> int:
+    """Helper function to calculate a message size, including the header, in bytes.
+
+    Parameters
+    ----------
+    num_points : int
+        Number of data points to transfer
+    datatype : BINARY_DATATYPES, optional
+            The format string for a single element. See struct module.
+    header_format : str
+        Specify "ieee" or "hp" or "empty" header format
+
+    Returns
+    -------
+    int
+        The total message size in bytes
+
+    """
+    data_length = num_points * struct.calcsize(datatype)
+    if header_format == "ieee":
+        header_length = len(f"{data_length}") + 2
+    elif header_format == "hp":
+        header_length = 4
+    elif header_format == "empty":
+        header_length = 0
+    else:
+        raise ValueError("Unsupported header_fmt: %s" % header_format)
+    result = data_length + header_length + 1  # 1 for the term char
+    return result

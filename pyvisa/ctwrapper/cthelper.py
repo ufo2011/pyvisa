@@ -3,10 +3,11 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import ctypes
 import os
 import sys
@@ -19,7 +20,6 @@ else:
 # On Linux, find Library returns the name not the path.
 # This excerpt provides a modified find_library.
 if os.name == "posix" and sys.platform.startswith("linux"):
-
     # Andreas Degert's find functions, using gcc, /sbin/ldconfig, objdump
     def define_find_libary():
         import errno
@@ -76,4 +76,4 @@ if os.name == "posix" and sys.platform.startswith("linux"):
 else:
     from ctypes.util import find_library
 
-__all__ = ["find_library", "FUNCTYPE", "Library"]
+__all__ = ["FUNCTYPE", "Library", "find_library"]
