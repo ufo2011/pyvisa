@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""PyVISA testsuite.
+"""PyVISA testsuite."""
 
-"""
 import logging
 from logging.handlers import BufferingHandler
 
@@ -42,7 +41,6 @@ class TestHandler(BufferingHandler):
 
 
 class BaseTestCase:
-
     CHECK_NO_WARNING = True
 
     def setup_method(self):

@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """Functions and classes to parse and assemble resource name.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import contextlib
 import re
-from collections import defaultdict
-from dataclasses import dataclass, field, fields
+from collections import OrderedDict, defaultdict
+from dataclasses import dataclass, fields
 from typing import (
     TYPE_CHECKING,
     Callable,
@@ -22,14 +23,14 @@ from typing import (
     TypeVar,
 )
 
-from typing_extensions import ClassVar
+from typing_extensions import ClassVar, Self
 
 from . import constants, errors, logger
 
 if TYPE_CHECKING:
-    from .resources import Resource  # noqa  # pragma: no cover
+    from .resources import Resource  # pragma: no cover
 
-#: Interface types for which a subclass of ResourName exists
+#: Interface types for which a subclass of ResourceName exists
 _INTERFACE_TYPES: Set[str] = set()
 
 #: Resource Class for Interface type
@@ -50,8 +51,8 @@ class InvalidResourceName(ValueError):
 
     @classmethod
     def bad_syntax(
-        cls, syntax: str, resource_name: str, ex: Exception = None
-    ) -> "InvalidResourceName":
+        cls, syntax: str, resource_name: str, ex: Optional[Exception] = None
+    ) -> Self:
         """Build an exception when the resource name cannot be parsed."""
         if ex:
             msg = "The syntax is '%s' (%s)." % (syntax, ex)
@@ -64,8 +65,10 @@ class InvalidResourceName(ValueError):
 
     @classmethod
     def subclass_notfound(
-        cls, interface_type_resource_class: Tuple[str, str], resource_name: str = None
-    ) -> "InvalidResourceName":
+        cls,
+        interface_type_resource_class: Tuple[str, str],
+        resource_name: Optional[str] = None,
+    ) -> Self:
         """Build an exception when no parser has been registered for a pair."""
 
         msg = "Parser not found for: %s." % (interface_type_resource_class,)
@@ -77,8 +80,8 @@ class InvalidResourceName(ValueError):
 
     @classmethod
     def rc_notfound(
-        cls, interface_type: str, resource_name: str = None
-    ) -> "InvalidResourceName":
+        cls, interface_type: str, resource_name: Optional[str] = None
+    ) -> Self:
         """Build an exception when no resource class is provided and no default is found."""
 
         msg = (
@@ -98,23 +101,27 @@ T = TypeVar("T", bound=Type["ResourceName"])
 
 
 def register_subclass(cls: T) -> T:
-    """Register a subclass for a given interface type and resource class."""
+    """Register a subclass for a given interface type and resource class.
+
+    Fields with a default value of None will be fully omitted from the resource
+    string when formatted.
+
+    """
 
     # Assemble the format string based on the resource parts
-    fmt = cls.interface_type
+    fmt: OrderedDict[str, str] = OrderedDict([("interface_type", cls.interface_type)])
     syntax = cls.interface_type
     for ndx, f in enumerate(fields(cls)):
-
         sep = "::" if ndx else ""
 
-        fmt += sep + "{0.%s}" % f.name
+        fmt[f.name] = sep + "{0}"
 
-        if not f.default:
+        if f.default == "":
             syntax += sep + f.name.replace("_", " ")
         else:
             syntax += "[" + sep + f.name.replace("_", " ") + "]"
 
-    fmt += "::" + cls.resource_class
+    fmt["resource_class"] = "::" + cls.resource_class
 
     if not cls.is_rc_optional:
         syntax += "::" + cls.resource_class
@@ -142,46 +149,26 @@ def register_subclass(cls: T) -> T:
     return cls
 
 
-class ResourceName:
+class _ResourceNameBase:
     """Base class for ResourceNames to be used as a mixin."""
-
-    #: Interface type string
-    interface_type: ClassVar[str]
-
-    #: Resource class string
-    resource_class: ClassVar[str]
 
     #: Specifices if the resource class part of the string is optional.
     is_rc_optional: ClassVar[bool] = False
 
     #: Formatting string for canonical
-    _canonical_fmt: str = field(init=False)
+    _canonical_fmt: Dict[str, str]
 
     #: VISA syntax for resource
-    _visa_syntax: str = field(init=False)
+    _visa_syntax: str
 
     #: VISA syntax for resource
-    _fields: Tuple[str, ...] = field(init=False)
+    _fields: Tuple[str, ...]
 
     #: Resource name provided by the user (not empty only when parsing)
-    user: str = field(init=False)
-
-    def __post_init__(self):
-        # Ensure that all mandatory arguments have been passed
-        for f in fields(self):
-            if not getattr(self, f.name):
-                raise TypeError(f.name + " is a required parameter")
-        self._fields = tuple(f.name for f in fields(self))
-
-    @property
-    def interface_type_const(self) -> constants.InterfaceType:
-        try:
-            return getattr(constants.InterfaceType, self.interface_type.lower())
-        except Exception:
-            return constants.InterfaceType.unknown
+    user: Optional[str]
 
     @classmethod
-    def from_string(cls, resource_name: str) -> "ResourceName":
+    def from_string(cls, resource_name: str) -> Self:
         """Parse a resource name and return a ResourceName
 
         Parameters
@@ -200,7 +187,6 @@ class ResourceName:
         uname = resource_name.upper()
 
         for interface_type in _INTERFACE_TYPES:
-
             # Loop through all known interface types until we found one
             # that matches the beginning of the resource name
             if not uname.startswith(interface_type):
@@ -247,7 +233,7 @@ class ResourceName:
         )
 
     @classmethod
-    def from_kwargs(cls, **kwargs) -> "ResourceName":
+    def from_kwargs(cls, **kwargs) -> Self:
         """Build a resource from keyword arguments."""
         interface_type = kwargs.pop("interface_type")
 
@@ -255,7 +241,12 @@ class ResourceName:
             raise InvalidResourceName("Unknown interface type: %s" % interface_type)
 
         try:
-            resource_class = kwargs.pop("resource_class", _DEFAULT_RC[interface_type])
+            if interface_type not in _DEFAULT_RC:
+                resource_class = kwargs.pop("resource_class")
+            else:
+                resource_class = kwargs.pop(
+                    "resource_class", _DEFAULT_RC[interface_type]
+                )
         except KeyError:
             raise InvalidResourceName.rc_notfound(interface_type)
 
@@ -274,7 +265,40 @@ class ResourceName:
         except (ValueError, TypeError) as ex:
             raise InvalidResourceName(str(ex))
 
-    # Implemented when building concrete subclass in build_rn_class
+    def __str__(self):
+        s = ""
+        for part, form in self._canonical_fmt.items():
+            value = getattr(self, part, None)
+            if value is not None:
+                s += form.format(value)
+        return s
+
+
+@dataclass
+class ResourceName(_ResourceNameBase):
+    #: Interface type string
+    interface_type: ClassVar[str]
+
+    #: Resource class string
+    resource_class: ClassVar[str]
+
+    def __post_init__(self):
+        # Ensure that all mandatory arguments have been passed
+        for f in fields(self):
+            if getattr(self, f.name) == "":
+                raise TypeError(f.name + " is a required parameter")
+        self._fields = tuple(f.name for f in fields(self))
+
+    @property
+    def interface_type_const(self) -> constants.InterfaceType:
+        try:
+            interface_type = self.interface_type.lower().replace("-", "_")
+            return getattr(constants.InterfaceType, interface_type)
+        except Exception:
+            return constants.InterfaceType.unknown
+
+        # Implemented when building concrete subclass in build_rn_class
+
     @classmethod
     def from_parts(cls, *parts):
         """Construct a resource name from a list of parts."""
@@ -296,7 +320,7 @@ class ResourceName:
         # The rest of the parts are consumed when mandatory elements are required.
         while len(pending) < len(rp):
             k, rp = rp[0], rp[1:]
-            if not k.default:
+            if k.default == "":
                 # This is impossible as far as I can tell for currently implemented
                 # resource names
                 if not pending:
@@ -313,9 +337,6 @@ class ResourceName:
         kwargs.update((k.name, p) for k, p in zip(rp, pending))
 
         return cls(**kwargs)
-
-    def __str__(self):
-        return self._canonical_fmt.format(self)
 
 
 # Build subclasses for each resource
@@ -340,7 +361,8 @@ class GPIBInstr(ResourceName):
     #: Secondary address of the device to connect to
     # Reference for the GPIB secondary address
     # https://www.mathworks.com/help/instrument/secondaryaddress.html
-    secondary_address: str = "0"
+    # NOTE: a secondary address of 0 is not the same as no secondary address.
+    secondary_address: Optional[str] = None
 
     interface_type: ClassVar[str] = "GPIB"
     resource_class: ClassVar[str] = "INSTR"
@@ -361,6 +383,47 @@ class GPIBIntfc(ResourceName):
     board: str = "0"
 
     interface_type: ClassVar[str] = "GPIB"
+    resource_class: ClassVar[str] = "INTFC"
+
+
+@register_subclass
+@dataclass
+class PrlgxASRLIntfc(ResourceName):
+    """PRLGX-ASRL INTFC
+
+    The syntax is:
+    PRLGX-ASRL[board]::serial device::INTFC
+    """
+
+    #: GPIB "board" to use.
+    board: str = "0"
+
+    #: Serial device to use.
+    serial_device: str = ""
+
+    interface_type: ClassVar[str] = "PRLGX-ASRL"
+    resource_class: ClassVar[str] = "INTFC"
+
+
+@register_subclass
+@dataclass
+class PrlgxTCPIPIntfc(ResourceName):
+    """PRLGX-TCPIP INTFC
+
+    The syntax is:
+    PRLGX-TCPIP[board]::host address[::port]::INTFC
+    """
+
+    #: GPIB "board" to use.
+    board: str = "0"
+
+    #: Host address of the device (IPv4 or host name)
+    host_address: str = ""
+
+    #: Port on which to establish the connection
+    port: str = "1234"
+
+    interface_type: ClassVar[str] = "PRLGX-TCPIP"
     resource_class: ClassVar[str] = "INTFC"
 
 
@@ -402,6 +465,28 @@ class TCPIPInstr(ResourceName):
     lan_device_name: str = "inst0"
 
     interface_type: ClassVar[str] = "TCPIP"
+    resource_class: ClassVar[str] = "INSTR"
+    is_rc_optional: ClassVar[bool] = True
+
+
+@register_subclass
+@dataclass
+class VICPInstr(ResourceName):
+    """VICP INSTR
+
+    The syntax is:
+    VICP::host address[::INSTR]
+
+    """
+
+    #: VICP resource do not support a board index. But it is the only resource
+    #: in this case so we allow parsing one but set a default of ""
+    _unused: None = None
+
+    #: Host address of the device (IPv4 or host name)
+    host_address: str = ""
+
+    interface_type: ClassVar[str] = "VICP"
     resource_class: ClassVar[str] = "INSTR"
     is_rc_optional: ClassVar[bool] = True
 
@@ -680,7 +765,7 @@ def filter(resources: Iterable[str], query: str) -> Tuple[str, ...]:
     if "{" in query:
         query, _ = query.split("{")
         logger.warning(
-            "optional part of the query expression not supported. " "See filter2"
+            "optional part of the query expression not supported. See filter2"
         )
 
     try:
@@ -757,7 +842,11 @@ class _AttrGetter:
             if not isinstance(self.parsed, GPIBInstr):
                 raise self.raise_missing_attr(item)
             else:
-                return int(self.parsed.secondary_address)
+                return (
+                    int(self.parsed.secondary_address)
+                    if self.parsed.secondary_address is not None
+                    else constants.VI_NO_SEC_ADDR
+                )
         elif item == "VI_ATTR_PXI_CHASSIS":
             if not isinstance(self.parsed, PXIBackplane):
                 raise self.raise_missing_attr(item)
@@ -829,7 +918,7 @@ def filter2(
     for rn in filtered:
         with open_close(rn) as getter:
             try:
-                if eval(optional, None, dict(res=getter)):
+                if eval(optional, None, {"res": getter}):
                     selected.append(rn)
             except Exception:
                 logger.exception("Failed to evaluate %s on %s", optional, rn)

@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Common test case for all message based resources.
+"""Common test case for all message based resources."""
 
-"""
 import ctypes
 import gc
 import logging
 import time
+from itertools import product
+from types import ModuleType
+from typing import Optional, Union
 
 import pytest
 
@@ -19,10 +21,25 @@ from .resource_utils import (
     ResourceTestCase,
 )
 
+np: Optional[ModuleType]
 try:
-    import numpy as np  # type: ignore
+    import numpy
+
+    np = numpy
 except ImportError:
     np = None
+
+
+class DummyMonitoringDevice:
+    """A test object that implements the progress bar interface"""
+
+    def __init__(self, total_bytes: int) -> None:
+        self.last_update: int = 0
+        self.total_bytes: int = total_bytes
+
+    def update(self, size: Union[int, None]) -> None:
+        if size is not None:
+            self.last_update += size
 
 
 class EventHandler:
@@ -298,7 +315,8 @@ class MessagebasedResourceTestCase(ResourceTestCase):
             assert self.instr.read() == "\r1;2;3;4;5\r"
 
     @pytest.mark.parametrize(
-        "hfmt, prefix", zip(("ieee", "hp", "empty"), (b"#212", b"#A\x0c\x00", b""))
+        "hfmt, prefix",
+        list(zip(("ieee", "hp", "empty"), (b"#212", b"#A\x0c\x00", b""))),
     )
     def test_write_binary_values(self, hfmt, prefix):
         """Test writing binary data."""
@@ -359,7 +377,7 @@ class MessagebasedResourceTestCase(ResourceTestCase):
         self.instr.write(msg)
         self.instr.write("SEND")
         values = self.instr.read_ascii_values()
-        assert type(values[0]) is float
+        assert isinstance(values[0], float)
         assert values == [1.0, 2.0, 3.0, 4.0, 5.0]
 
         # Non standard separator and termination
@@ -370,7 +388,7 @@ class MessagebasedResourceTestCase(ResourceTestCase):
             "SEND", converter="d", separator=";", delay=0.5
         )
         assert time.time() - tic > 0.5
-        assert type(values[0]) is int
+        assert isinstance(values[0], int)
         assert values == [1, 2, 3, 4, 5]
 
         # Numpy container
@@ -383,14 +401,26 @@ class MessagebasedResourceTestCase(ResourceTestCase):
             assert values.dtype is expected.dtype
             np.testing.assert_array_equal(values, expected)
 
-    @pytest.mark.parametrize("hfmt", ("ieee", "hp"))
-    def test_read_binary_values(self, hfmt):
+    @pytest.mark.parametrize(
+        "hfmt, use_pb", list(product(("ieee", "hp"), (False, True)))
+    )
+    def test_read_binary_values(self, hfmt, use_pb):
         """Test reading binary data."""
         # TODO test handling binary decoding issue (troublesome)
         self.instr.read_termination = "\r"
         # 3328 in binary short is \x00\r this way we can interrupt the
         # transmission midway to test some corner cases
         data = [1, 2, 3328, 3, 4, 5, 6, 7]
+        data_length = 2 * len(data)
+        # Calculate header length based on header format
+        header_length = len(f"{data_length}") + 2 if hfmt == "ieee" else 4
+        monitor = (
+            DummyMonitoringDevice(
+                data_length + header_length + 1
+            )  # 1 for the term char
+            if use_pb
+            else None
+        )
 
         self.instr.write("RECEIVE")
         self.instr.write_binary_values(
@@ -403,15 +433,18 @@ class MessagebasedResourceTestCase(ResourceTestCase):
             header_fmt=hfmt,
             expect_termination=True,
             chunk_size=8,
+            monitoring_interface=monitor,
         )
         self.instr.read_bytes(1)
         assert data == new
+        if use_pb:
+            assert monitor.last_update == monitor.total_bytes
 
         self.instr.write("RECEIVE")
         self.instr.write_binary_values(
             "", data, "h", header_fmt=hfmt, is_big_endian=True
         )
-
+        monitor = DummyMonitoringDevice(data_length + header_length) if use_pb else None
         new = self.instr.query_binary_values(
             "SEND",
             datatype="h",
@@ -420,12 +453,16 @@ class MessagebasedResourceTestCase(ResourceTestCase):
             expect_termination=False,
             chunk_size=8,
             container=np.array if np else list,
+            monitoring_interface=monitor,
         )
         self.instr.read_bytes(1)
         if np:
             np.testing.assert_array_equal(new, np.array(data, dtype=np.int16))
         else:
             assert data == new
+
+        if use_pb:
+            assert monitor.last_update == monitor.total_bytes
 
     def test_read_query_binary_values_invalid_header(self):
         """Test we properly handle an invalid header."""
@@ -464,7 +501,7 @@ class MessagebasedResourceTestCase(ResourceTestCase):
         """ """
         pass
 
-    @pytest.mark.parametrize("hfmt, header", zip(("ieee", "empty"), ("#0", "")))
+    @pytest.mark.parametrize("hfmt, header", list(zip(("ieee", "empty"), ("#0", ""))))
     def test_read_binary_values_unreported_length(self, hfmt, header):
         """Test reading binary data."""
         self.instr.read_termination = "\r"
@@ -567,7 +604,7 @@ class MessagebasedResourceTestCase(ResourceTestCase):
         tic = time.perf_counter()
         values = self.instr.query_ascii_values("SEND")
         assert time.perf_counter() - tic > 0.99
-        assert type(values[0]) is float
+        assert isinstance(values[0], float)
         assert values == [1.0, 2.0, 3.0, 4.0, 5.0]
 
         # Test specifying the delay
@@ -577,7 +614,7 @@ class MessagebasedResourceTestCase(ResourceTestCase):
         tic = time.perf_counter()
         values = self.instr.query_ascii_values("SEND", delay=1.0)
         assert time.perf_counter() - tic > 0.99
-        assert type(values[0]) is float
+        assert isinstance(values[0], float)
         assert values == [1.0, 2.0, 3.0, 4.0, 5.0]
 
         # Test specifying a 0 delay
@@ -587,7 +624,7 @@ class MessagebasedResourceTestCase(ResourceTestCase):
         tic = time.perf_counter()
         values = self.instr.query_ascii_values("SEND", delay=0.0)
         assert time.perf_counter() - tic < 0.99
-        assert type(values[0]) is float
+        assert isinstance(values[0], float)
         assert values == [1.0, 2.0, 3.0, 4.0, 5.0]
 
     def test_instrument_wide_delay_in_query_binary(self):
@@ -807,11 +844,6 @@ class EventAwareMessagebasedResourceTestCaseMixin(EventAwareResourceTestCaseMixi
         assert not response.timed_out
         assert response.event.event_type == EventType.service_request
         assert self.instr.read() == "1"
-
-        with pytest.warns(FutureWarning):
-            response.event_type
-        with pytest.warns(FutureWarning):
-            response.context
 
     def test_managing_visa_handler(self):
         """Test using visa handlers."""

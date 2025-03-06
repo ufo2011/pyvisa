@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Test highlevel functions not requiring an actual backend.
+"""Test highlevel functions not requiring an actual backend."""
 
-"""
 import logging
 import os
 import sys
+from importlib import import_module
 
 import pytest
 
-from pyvisa import constants, highlevel, resources, rname
+from pyvisa import ResourceManager, constants, highlevel, resources, rname
 from pyvisa.ctwrapper import IVIVisaLibrary
 
 from . import BaseTestCase
@@ -61,11 +61,7 @@ class TestHighlevel(BaseTestCase):
         # interface_type interface_board_number resource_class resource_name alias
         for parsed, value in zip(
             info,
-            values
-            + (
-                rname.to_canonical_name(rsc_name),
-                None,
-            ),
+            (*values, rname.to_canonical_name(rsc_name), None),
         ):
             assert parsed == value
 
@@ -130,8 +126,7 @@ class TestHighlevel(BaseTestCase):
         """Test retrieving a wrapper class."""
         highlevel._WRAPPERS.clear()
 
-        with pytest.warns(FutureWarning):
-            highlevel.get_wrapper_class("ni")
+        highlevel.get_wrapper_class("ivi")
         assert "ivi" in highlevel._WRAPPERS
 
         path = os.path.join(os.path.dirname(__file__), "fake-extensions")
@@ -247,3 +242,22 @@ class TestHighlevel(BaseTestCase):
     def test_base_get_debug_info(self):
         """Test the base class implementation of get_debug_info."""
         assert len(highlevel.VisaLibraryBase.get_debug_info()) == 1
+
+    def test_open_resource_attr(self, caplog):
+        """Test handling errors when trying to open a Visa library."""
+        highlevel._WRAPPERS.clear()
+
+        path = os.path.join(os.path.dirname(__file__), "fake-extensions")
+        sys.path.append(path)
+        try:
+            pkg = import_module("pyvisa_test_open")
+            highlevel.get_wrapper_class("test_open")
+            rm = ResourceManager("@test_open")
+            assert rm is not None
+        finally:
+            sys.path.remove(path)
+
+        instr = rm.open_resource("TCPIP::192.168.0.1::INSTR")
+        assert isinstance(instr, pkg.FakeResource)
+        assert rm.visalib.open_resource_called
+        rm.close()

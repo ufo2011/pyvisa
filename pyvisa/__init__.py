@@ -3,23 +3,20 @@
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
-import logging
-import sys
 
-if sys.version_info >= (3, 8):
-    from importlib.metadata import PackageNotFoundError, version
-else:
-    from importlib_metadata import PackageNotFoundError, version  # type: ignore
+import logging
+from importlib.metadata import PackageNotFoundError, version
 
 # Defined here since it is imported in other pyvisa modules
 logger = logging.getLogger("pyvisa")
 logger.addHandler(logging.NullHandler())
 
-from .errors import (
+# Those import cannot at the top of the file
+from .errors import (  # noqa: E402
     Error,
     InvalidBinaryFormat,
     InvalidSession,
@@ -30,7 +27,7 @@ from .errors import (
     VisaIOWarning,
     VisaTypeError,
 )
-from .highlevel import ResourceManager
+from .highlevel import ResourceManager  # noqa: E402
 from .resources import Resource  # noqa : F401 This is needed to register all resources.
 
 
@@ -61,17 +58,17 @@ except PackageNotFoundError:
 
 
 __all__ = [
-    "ResourceManager",
-    "logger",
     "Error",
-    "VisaIOError",
-    "VisaIOWarning",
-    "VisaTypeError",
-    "UnknownHandler",
-    "OSNotSupported",
     "InvalidBinaryFormat",
     "InvalidSession",
     "LibraryError",
+    "OSNotSupported",
+    "ResourceManager",
+    "UnknownHandler",
+    "VisaIOError",
+    "VisaIOWarning",
+    "VisaTypeError",
     "log_to_screen",
     "log_to_stream",
+    "logger",
 ]

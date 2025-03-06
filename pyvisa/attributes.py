@@ -6,10 +6,11 @@ possible values for each attributes.
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import enum
 import sys
 from collections import defaultdict
@@ -35,8 +36,8 @@ from typing_extensions import ClassVar, DefaultDict
 from . import constants, util
 
 if TYPE_CHECKING:
-    from .events import Event, IOCompletionEvent  # noqa  # pragma: no cover
-    from .resources import Resource  # noqa  # pragma: no cover
+    from .events import Event, IOCompletionEvent  # pragma: no cover
+    from .resources import Resource  # pragma: no cover
 
 #: Not available value.
 NotAvailable = object()
@@ -58,7 +59,7 @@ AttributesPerResource: DefaultDict[
 ] = defaultdict(set)
 
 #: Map id to attribute
-AttributesByID: Dict[int, Type["Attribute"]] = dict()
+AttributesByID: Dict[int, Type["Attribute"]] = {}
 
 
 # --- Descriptor classes ---------------------------------------------------------------
@@ -98,8 +99,6 @@ class Attribute(Generic[T]):
     write: ClassVar[bool] = False
     local: ClassVar[bool] = False
 
-    __doc__: str
-
     @classmethod
     def __init_subclass__(cls, **kwargs):
         """Register the subclass with the supported resources."""
@@ -123,6 +122,7 @@ class Attribute(Generic[T]):
     @classmethod
     def redoc(cls) -> None:
         """Generate a descriptive docstring."""
+        assert cls.__doc__ is not None
         cls.__doc__ += "\n:VISA Attribute: %s (%s)" % (cls.visa_name, cls.attribute_id)
 
     def post_get(self, value: Any) -> T:
@@ -161,11 +161,11 @@ class Attribute(Generic[T]):
     def __get__(self, instance: None, owner) -> "Attribute":
         pass
 
-    @overload  # noqa: F811
-    def __get__(self, instance: Union["Resource", "Event"], owner) -> T:  # noqa: F811
+    @overload
+    def __get__(self, instance: Union["Resource", "Event"], owner) -> T:
         pass
 
-    def __get__(self, instance, owner):  # noqa: F811
+    def __get__(self, instance, owner):
         """Access a VISA attribute and convert to a nice Python representation."""
         if instance is None:
             return self
@@ -215,6 +215,7 @@ class EnumAttribute(Attribute):
     @classmethod
     def redoc(cls) -> None:
         """Add the enum member to the docstring."""
+        assert cls.__doc__ is not None
         super(EnumAttribute, cls).redoc()
         cls.__doc__ += "\n:type: :class:%s.%s" % (
             cls.enum_type.__module__,
@@ -238,12 +239,46 @@ class EnumAttribute(Attribute):
         return value
 
 
+class FlagAttribute(Attribute):
+    """Class for attributes with Flag values that map to a PyVISA Enum."""
+
+    #: Enum type with valid values.
+    enum_type: ClassVar[Type[enum.IntFlag]]
+
+    @classmethod
+    def redoc(cls) -> None:
+        """Add the enum member to the docstring."""
+        assert cls.__doc__ is not None
+        super(FlagAttribute, cls).redoc()
+        cls.__doc__ += "\n:type: :class:%s.%s" % (
+            cls.enum_type.__module__,
+            cls.enum_type.__name__,
+        )
+
+    def post_get(self, value: Any) -> enum.IntFlag:
+        """Convert the VISA value to the proper enum member."""
+        return self.enum_type(value)
+
+    def pre_set(self, value: enum.IntFlag) -> Any:
+        """Validate the value passed against the enum."""
+        # Python 3.8 raise if a non-Enum is used for value
+        try:
+            value = self.enum_type(value)
+        except ValueError:
+            raise ValueError(
+                "%r is an invalid value for attribute %s, "
+                "should be a %r" % (value, self.visa_name, self.enum_type)
+            )
+        return value
+
+
 class IntAttribute(Attribute):
     """Class for attributes with integers values."""
 
     @classmethod
     def redoc(cls) -> None:
         """Add the type of the returned value."""
+        assert cls.__doc__ is not None
         super(IntAttribute, cls).redoc()
         cls.__doc__ += "\n:type: int"
 
@@ -263,6 +298,7 @@ class RangeAttribute(IntAttribute):
     @classmethod
     def redoc(cls) -> None:
         """Specify the range of validity for the attribute."""
+        assert cls.__doc__ is not None
         super(RangeAttribute, cls).redoc()
         cls.__doc__ += "\n:range: %s <= value <= %s" % (cls.min_value, cls.max_value)
         if cls.values:
@@ -300,7 +336,8 @@ class ValuesAttribute(Attribute):
 
     @classmethod
     def redoc(cls) -> None:
-        """Add the allowed values to teh docs."""
+        """Add the allowed values to the docs."""
+        assert cls.__doc__ is not None
         super(ValuesAttribute, cls).redoc()
         cls.__doc__ += "\n:values: %s" % cls.values
 
@@ -322,6 +359,7 @@ class BooleanAttribute(Attribute):
     @classmethod
     def redoc(cls) -> None:
         """Add the type to the docs."""
+        assert cls.__doc__ is not None
         super(BooleanAttribute, cls).redoc()
         cls.__doc__ += "\n:type: bool"
 
@@ -342,6 +380,7 @@ class CharAttribute(Attribute):
     @classmethod
     def redoc(cls) -> None:
         """Specify the valid characters."""
+        assert cls.__doc__ is not None
         super(CharAttribute, cls).redoc()
         cls.__doc__ += "\nASCII Character\n:type: str | bytes"
 
@@ -357,8 +396,21 @@ class CharAttribute(Attribute):
 # --- Session attributes ---------------------------------------------------------------
 # Attributes are in the same order as in the constants.ResourceAttribute enum
 
-# VI_ATTR_RM_SESSION is not implemented as resource property,
-# use .resource_manager.session instead
+
+class AttrVI_ATTR_RM_SESSION(Attribute):
+    """Specifies the session of the Resource Manager used to open this session."""
+
+    resources = AllSessionTypes
+
+    py_name = ""
+
+    visa_name = "VI_ATTR_RM_SESSION"
+
+    visa_type = "ViSession"
+
+    default = NotAvailable
+
+    read, write, local = True, False, False
 
 
 class AttrVI_ATTR_INTF_TYPE(EnumAttribute):
@@ -707,8 +759,11 @@ class AttrVI_ATTR_SEND_END_EN(BooleanAttribute):
         (constants.InterfaceType.asrl, "INSTR"),
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -736,8 +791,11 @@ class AttrVI_ATTR_SUPPRESS_END_EN(BooleanAttribute):
     resources = [
         (constants.InterfaceType.asrl, "INSTR"),
         (constants.InterfaceType.gpib, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -769,8 +827,11 @@ class AttrVI_ATTR_TERMCHAR_EN(BooleanAttribute):
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -803,8 +864,11 @@ class AttrVI_ATTR_TERMCHAR(CharAttribute):
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -838,8 +902,11 @@ class AttrVI_ATTR_IO_PROT(EnumAttribute):
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -866,8 +933,11 @@ class AttrVI_ATTR_FILE_APPEND_EN(BooleanAttribute):
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -899,8 +969,11 @@ class AttrVI_ATTR_RD_BUF_OPER_MODE(RangeAttribute):
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -931,8 +1004,11 @@ class AttrVI_ATTR_RD_BUF_SIZE(RangeAttribute):
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -968,8 +1044,11 @@ class AttrVI_ATTR_WR_BUF_OPER_MODE(RangeAttribute):
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -1000,8 +1079,11 @@ class AttrVI_ATTR_WR_BUF_SIZE(RangeAttribute):
         (constants.InterfaceType.gpib, "INSTR"),
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -1036,8 +1118,11 @@ class AttrVI_ATTR_DMA_ALLOW_EN(BooleanAttribute):
         (constants.InterfaceType.gpib, "INTFC"),
         (constants.InterfaceType.pxi, "INSTR"),
         (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
         (constants.InterfaceType.usb, "INSTR"),
         (constants.InterfaceType.usb, "RAW"),
         (constants.InterfaceType.vxi, "INSTR"),
@@ -1064,8 +1149,10 @@ class AttrVI_ATTR_TCPIP_ADDR(Attribute):
     """
 
     resources = [
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
     ]
 
     py_name = ""
@@ -1087,8 +1174,10 @@ class AttrVI_ATTR_TCPIP_HOSTNAME(Attribute):
     """
 
     resources = [
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
         (constants.InterfaceType.tcpip, "INSTR"),
         (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
     ]
 
     py_name = ""
@@ -1109,7 +1198,11 @@ class AttrVI_ATTR_TCPIP_PORT(RangeAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.tcpip, "SOCKET")]
+    resources = [
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
+    ]
 
     py_name = ""
 
@@ -1149,7 +1242,11 @@ class AttrVI_ATTR_TCPIP_NODELAY(BooleanAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.tcpip, "SOCKET")]
+    resources = [
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
+    ]
 
     py_name = ""
 
@@ -1172,7 +1269,11 @@ class AttrVI_ATTR_TCPIP_KEEPALIVE(BooleanAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.tcpip, "SOCKET")]
+    resources = [
+        (constants.InterfaceType.prlgx_tcpip, "INTFC"),
+        (constants.InterfaceType.tcpip, "SOCKET"),
+        (constants.InterfaceType.vicp, "INSTR"),
+    ]
 
     py_name = ""
 
@@ -1224,11 +1325,11 @@ class AttrVI_ATTR_TCPIP_HISLIP_VERSION(RangeAttribute):
 
 
 class AttrVI_ATTR_TCPIP_HISLIP_OVERLAP_EN(BooleanAttribute):
-    """Enables HiSLIP ‘Overlap’ mode.
+    """Enables HiSLIP 'Overlap' mode.
 
     The value defaults to the mode suggested by the instrument on HiSLIP connection.
-    If disabled, the connection uses ‘Synchronous’ mode to detect and recover
-    from interrupted errors. If enabled, the connection uses ‘Overlapped’ mode
+    If disabled, the connection uses 'Synchronous' mode to detect and recover
+    from interrupted errors. If enabled, the connection uses 'Overlapped' mode
     to allow overlapped responses. If changed, VISA will do a Device Clear
     operation to change the mode.
 
@@ -1260,7 +1361,7 @@ class AttrVI_ATTR_TCPIP_HISLIP_MAX_MESSAGE_KB(RangeAttribute):
 
     visa_name = "VI_ATTR_TCPIP_HISLIP_MAX_MESSAGE_KB"
 
-    visa_type = "ViUint32"
+    visa_type = "ViUInt32"
 
     default = 1024
 
@@ -1508,9 +1609,12 @@ class AttrVI_ATTR_GPIB_HS488_CBL_LEN(RangeAttribute):
 
 
 class AttrVI_ATTR_ASRL_AVAIL_NUM(RangeAttribute):
-    """Number of bytes available in the low- level I/O receive buffer."""
+    """Number of bytes available in the low-level I/O receive buffer."""
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "bytes_in_buffer"
 
@@ -1518,7 +1622,7 @@ class AttrVI_ATTR_ASRL_AVAIL_NUM(RangeAttribute):
 
     visa_type = "ViUInt32"
 
-    default = NotAvailable
+    default = 0
 
     read, write, local = True, False, False
 
@@ -1534,7 +1638,10 @@ class AttrVI_ATTR_ASRL_BAUD(RangeAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "baud_rate"
 
@@ -1557,7 +1664,10 @@ class AttrVI_ATTR_ASRL_DATA_BITS(RangeAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "data_bits"
 
@@ -1575,7 +1685,10 @@ class AttrVI_ATTR_ASRL_DATA_BITS(RangeAttribute):
 class AttrVI_ATTR_ASRL_PARITY(EnumAttribute):
     """Parity used with every frame transmitted and received."""
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "parity"
 
@@ -1597,7 +1710,10 @@ class AttrVI_ATTR_ASRL_STOP_BITS(EnumAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "stop_bits"
 
@@ -1612,10 +1728,13 @@ class AttrVI_ATTR_ASRL_STOP_BITS(EnumAttribute):
     enum_type = constants.StopBits
 
 
-class AttrVI_ATTR_ASRL_FLOW_CNTRL(EnumAttribute):
+class AttrVI_ATTR_ASRL_FLOW_CNTRL(FlagAttribute):
     """Indicate the type of flow control used by the transfer mechanism."""
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "flow_control"
 
@@ -1638,7 +1757,10 @@ class AttrVI_ATTR_ASRL_DISCARD_NULL(BooleanAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "discard_null"
 
@@ -1682,7 +1804,10 @@ class AttrVI_ATTR_ASRL_ALLOW_TRANSMIT(BooleanAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "allow_transmit"
 
@@ -1698,7 +1823,10 @@ class AttrVI_ATTR_ASRL_ALLOW_TRANSMIT(BooleanAttribute):
 class AttrVI_ATTR_ASRL_END_IN(EnumAttribute):
     """Method used to terminate read operations."""
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "end_input"
 
@@ -1716,7 +1844,10 @@ class AttrVI_ATTR_ASRL_END_IN(EnumAttribute):
 class AttrVI_ATTR_ASRL_END_OUT(EnumAttribute):
     """Method used to terminate write operations."""
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "end_output"
 
@@ -1741,7 +1872,10 @@ class AttrVI_ATTR_ASRL_BREAK_LEN(RangeAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "break_length"
 
@@ -1769,7 +1903,10 @@ class AttrVI_ATTR_ASRL_BREAK_STATE(EnumAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "break_state"
 
@@ -1791,7 +1928,10 @@ class AttrVI_ATTR_ASRL_REPLACE_CHAR(CharAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "replace_char"
 
@@ -1812,7 +1952,10 @@ class AttrVI_ATTR_ASRL_XOFF_CHAR(CharAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "xoff_char"
 
@@ -1833,7 +1976,10 @@ class AttrVI_ATTR_ASRL_XON_CHAR(CharAttribute):
 
     """
 
-    resources = [(constants.InterfaceType.asrl, "INSTR")]
+    resources = [
+        (constants.InterfaceType.asrl, "INSTR"),
+        (constants.InterfaceType.prlgx_asrl, "INTFC"),
+    ]
 
     py_name = "xon_char"
 
@@ -2194,7 +2340,7 @@ class AttrVI_ATTR_USB_BULK_OUT_STATUS(RangeAttribute):
 class AttrVI_ATTR_USB_BULK_OUT_PIPE(RangeAttribute):
     """Endpoint address of the USB bulk-out or interrupt-out pipe.
 
-    An initial value of –1 signifies that this resource does not have any
+    An initial value of -1 signifies that this resource does not have any
     bulk-out or interrupt-out pipes. This endpoint is used in viWrite
     and related operations.
 
@@ -2690,7 +2836,7 @@ class AttrVI_ATTR_FDC_MODE(RangeAttribute):
     min_value, max_value, values = 0, 65535, None
 
 
-class AttrVVI_ATTR_FDC_GEN_SIGNAL_EN(BooleanAttribute):
+class AttrVI_ATTR_FDC_GEN_SIGNAL_EN(BooleanAttribute):
     """Fast Data Channel (FDC) signal enable."""
 
     resources = [(constants.InterfaceType.vxi, "INSTR")]
@@ -2699,7 +2845,7 @@ class AttrVVI_ATTR_FDC_GEN_SIGNAL_EN(BooleanAttribute):
 
     visa_name = "VI_ATTR_FDC_GEN_SIGNAL_EN"
 
-    visa_type = "ViBool"
+    visa_type = "ViBoolean"
 
     default = NotAvailable
 
@@ -2833,7 +2979,7 @@ class AttrVI_ATTR_MEM_SIZE(RangeAttribute):
 
     visa_name = "VI_ATTR_MEM_SIZE"
 
-    visa_type = "ViBusSize64" if constants.is_64bits else "ViUInt32"
+    visa_type = "ViBusSize64" if constants.is_64bits else "ViBusSize"
 
     default = NotAvailable
 
@@ -3069,26 +3215,25 @@ class AttrVI_ATTR_VXI_TRIG_SUPPORT(RangeAttribute):
     min_value, max_value, values = 0, 4294967295, None
 
 
-# GPIB-VXI is not supported
-# class AttrVI_ATTR_INTF_PARENT_NUM(RangeAttribute):
-#     """This attribute shows the current state of the VXI/VME interrupt lines.
-#     This is a bit vector with bits 0-6 corresponding to interrupt
-#     lines 1-7.
-#     """
+class AttrVI_ATTR_INTF_PARENT_NUM(RangeAttribute):
+    """This attribute shows the current state of the VXI/VME interrupt lines.
+    This is a bit vector with bits 0-6 corresponding to interrupt
+    lines 1-7.
+    """
 
-#     resources = [(constants.InterfaceType.vxi, "BACKPLANE")]
+    resources = [(constants.InterfaceType.vxi, "BACKPLANE")]
 
-#     py_name = ""
+    py_name = ""
 
-#     visa_name = "VI_ATTR_INTF_PARENT_NUM"
+    visa_name = "VI_ATTR_INTF_PARENT_NUM"
 
-#     visa_type = "ViUInt16"
+    visa_type = "ViUInt16"
 
-#     default = NotAvailable
+    default = NotAvailable
 
-#     read, write, local = True, False, False
+    read, write, local = True, False, False
 
-#     min_value, max_value, values = 0, 65535, None
+    min_value, max_value, values = 0, 65535, None
 
 
 class AttrVI_ATTR_VXI_DEV_CLASS(EnumAttribute):
@@ -3297,7 +3442,7 @@ class AttrVI_ATTR_PXI_BUS_NUM(RangeAttribute):
 class AttrVI_ATTR_PXI_CHASSIS(RangeAttribute):
     """PXI chassis number of this device.
 
-    A value of –1 means the chassis number is unknown.
+    A value of -1 means the chassis number is unknown.
 
     """
 
@@ -3428,7 +3573,7 @@ class AttrVI_ATTR_PXI_IS_EXPRESS(BooleanAttribute):
 class AttrVI_ATTR_PXI_SLOT_LWIDTH(ValuesAttribute):
     """PCI Express link width of the PXI Express peripheral slot of the device.
 
-    A value of –1 indicates that the device is not a PXI Express device.
+    A value of -1 indicates that the device is not a PXI Express device.
 
     """
 
@@ -3450,7 +3595,7 @@ class AttrVI_ATTR_PXI_SLOT_LWIDTH(ValuesAttribute):
 class AttrVI_ATTR_PXI_MAX_LWIDTH(ValuesAttribute):
     """Maximum PCI Express link width of the device.
 
-    A value of –1 indicates that the device is not a PXI/PCI Express device.
+    A value of -1 indicates that the device is not a PXI/PCI Express device.
 
     """
 
@@ -3472,7 +3617,7 @@ class AttrVI_ATTR_PXI_MAX_LWIDTH(ValuesAttribute):
 class AttrVI_ATTR_PXI_ACTUAL_LWIDTH(ValuesAttribute):
     """PCI Express link width negotiated between the host controller and the device.
 
-    A value of –1 indicates that the device is not a PXI/PCI Express device.
+    A value of -1 indicates that the device is not a PXI/PCI Express device.
 
     """
 
@@ -3494,7 +3639,7 @@ class AttrVI_ATTR_PXI_ACTUAL_LWIDTH(ValuesAttribute):
 class AttrVI_ATTR_PXI_DSTAR_BUS(RangeAttribute):
     """Differential star bus number of this device.
 
-    A value of –1 means the chassis is unidentified or does not have a timing slot.
+    A value of -1 means the chassis is unidentified or does not have a timing slot.
 
     """
 
@@ -3685,7 +3830,7 @@ class _AttrVI_ATTR_PXI_MEM_SIZE_BARX(RangeAttribute):
 
 
 mod = sys.modules[__name__]
-for i in range(0, 5):
+for i in range(0, 6):
     setattr(
         mod,
         f"AttrVI_ATTR_PXI_MEM_TYPE_BAR{i}",
@@ -3698,7 +3843,7 @@ for i in range(0, 5):
 
     setattr(
         mod,
-        f"AttrVI_ATTR_PXI_MEM_TYPE_BAR{i}",
+        f"AttrVI_ATTR_PXI_MEM_BASE_BAR{i}",
         type(
             f"AttrVI_ATTR_PXI_MEM_BASE_BAR{i}",
             (_AttrVI_ATTR_PXI_MEM_BASE_BARX,),
@@ -3708,7 +3853,7 @@ for i in range(0, 5):
 
     setattr(
         mod,
-        f"AttrVI_ATTR_PXI_MEM_TYPE_BAR{i}",
+        f"AttrVI_ATTR_PXI_MEM_SIZE_BAR{i}",
         type(
             f"AttrVI_ATTR_PXI_MEM_SIZE_BAR{i}",
             (_AttrVI_ATTR_PXI_MEM_SIZE_BARX,),

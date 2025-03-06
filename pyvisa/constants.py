@@ -9,16 +9,17 @@ The module exports the values under the original, all-uppercase names.
 
 This file is part of PyVISA.
 
-:copyright: 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import enum
 import sys
 
 from typing_extensions import Literal
 
-is_64bits = sys.maxsize > 2 ** 32
+is_64bits = sys.maxsize > 2**32
 
 
 def _to_int(x: int) -> int:
@@ -178,7 +179,7 @@ VI_ATTR_MAX_QUEUE_LENGTH     = 0x3FFF0005
 VI_ATTR_USER_DATA_32         = 0x3FFF0007
 VI_ATTR_USER_DATA_64         = 0x3FFF000A
 VI_ATTR_USER_DATA            = (
-    VI_ATTR_USER_DATA_64 if is_64bits else VI_ATTR_USER_DATA_64
+    VI_ATTR_USER_DATA_64 if is_64bits else VI_ATTR_USER_DATA_32
 )
 VI_ATTR_FDC_CHNL             = 0x3FFF000D
 VI_ATTR_FDC_MODE             = 0x3FFF000F
@@ -324,7 +325,7 @@ VI_ATTR_INTR_STATUS_ID       = 0x3FFF4023
 VI_ATTR_STATUS               = 0x3FFF4025
 VI_ATTR_RET_COUNT_32         = 0x3FFF4026
 VI_ATTR_RET_COUNT_64         = 0x3FFF4028
-VI_ATTR_RET_COUNT            = VI_ATTR_RET_COUNT_64 if is_64bits else VI_ATTR_RET_COUNT_64
+VI_ATTR_RET_COUNT            = VI_ATTR_RET_COUNT_64 if is_64bits else VI_ATTR_RET_COUNT_32
 VI_ATTR_BUFFER               = 0x3FFF4027
 VI_ATTR_RECV_INTR_LEVEL      = 0x3FFF4041
 VI_ATTR_OPER_NAME            = 0xBFFF4042
@@ -816,6 +817,15 @@ class InterfaceType(enum.IntEnum):
     #: Rohde and Schwarz Device via Passport
     rsnrp = 33024
 
+    #: Lecroy VICP via passport
+    vicp = 36000  # FIXME
+
+    #: prologix usb
+    prlgx_asrl = 34567  # an arbitrarily chosen value
+
+    #: prologix tcpip
+    prlgx_tcpip = 76543  # an arbitrarily chosen value
+
 
 @enum.unique
 class LineState(enum.IntEnum):
@@ -1077,7 +1087,7 @@ class WireMode(enum.IntEnum):
 
 
 @enum.unique
-class ControlFlow(enum.IntEnum):
+class ControlFlow(enum.IntFlag):
     """Control flow for a serial resource."""
 
     none = VI_ASRL_FLOW_NONE

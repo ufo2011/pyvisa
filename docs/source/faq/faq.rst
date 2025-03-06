@@ -57,11 +57,12 @@ This error occurs when you have provided an invalid path for the VISA library.
 Check that the path provided to the constructor or in the configuration file
 
 
-Error: Could not found VISA library
------------------------------------
+Error: Could not find VISA library
+----------------------------------
 
 This error occurs when you have not provided a path for the VISA library and
-PyVISA is not able to find it for you. You can solve it by providing the
+PyVISA is not able to find it for you. You can solve it by creating a configuration
+file as described in :ref:`intro-configuring` (recommended) or by providing the
 library path to the ``VisaLibrary`` or ``ResourceManager`` constructor::
 
     >>> visalib = VisaLibrary('/path/to/library')
@@ -70,17 +71,32 @@ or::
 
     >>> rm = ResourceManager('Path to library')
 
-or creating a configuration file as described in :ref:`intro-configuring`.
+.. note::
 
+   If you get this error while trying to create a ``ResourceManager`` in Python built
+   for Cygwin (https://www.cygwin.com/) on Windows:
 
-Error: `visa` module has no attribute `ResourceManager`
--------------------------------------------------------
+     1. Check you are running the Cygwin build of Python by running ``python -VV``. If not, follow
+        the troubleshooting steps for Windows::
 
-The https://github.com/visa-sdk/visa-python provides a visa package that can
-conflict with :py:mod:`visa` module provided by PyVISA, which is why the
-:py:mod:`visa` module is deprecated and it is preferred to import
-:py:mod:`pyvisa` instead of :py:mod:`visa`. Both modules provides the
-same interface and no other changes should be needed.
+           $ python -VV
+           Python 3.9.10 (main, Jan 20 2022, 21:37:52)
+           [GCC 11.2.0]
+
+     2. Specify the location of the ``visa32.dll`` or ``visa64.dll`` using the ``linux`` syntax
+        and Cygwin paths by creating a `.pyvisarc` (:ref:`intro-configuring`) file::
+
+           $ cat ~/.pyvisarc
+           [Paths]
+           VISA library: /cygdrive/c/Windows/System32/visa64.dll
+
+        or::
+
+           rm = pyvisa.ResourceManager('/cygdrive/c/Windows/System32/visa64.dll')
+
+        or::
+
+           rm = pyvisa.ResourceManager('/cygdrive/c/Windows/System32/visa32.dll')
 
 
 Error: No matching architecture
@@ -110,12 +126,12 @@ following debug command::
 
     pyvisa-info
 
-You will see the 'bitness' of the Python interpreter and at the end you will
+You will see the architecture the Python interpreter was compiled for, and at the end you will
 see the list of VISA libraries that PyVISA was able to find.
 
 The solution is to:
 
-  1. Install and use a VISA library matching your Python 'bitness'
+  1. Install and use a VISA library matching your Python architecture
 
      Download and install it from **National Instruments's VISA**. Run the
      debug command again to see if the new library was found by PyVISA. If not,
@@ -126,25 +142,24 @@ The solution is to:
 
 or
 
-  2. Install and use a Python matching your VISA library 'bitness'
+  2. Install and use a Python matching your VISA library architecture
 
      In Windows and Linux: Download and install Python with the matching
      bitness. Run your script again using the new Python
 
-     In Mac OS X, Python is usually delivered as universal binary (32 and
-     64 bits).
+     In macOS, Python is usually delivered as universal binary (x86_64 and arm).
 
-     You can run it in 32 bit by running::
-
-        arch -i386 python myscript.py
-
-     or in 64 bits by running::
+     You can run it in x86_64 mode by running::
 
         arch -x86_64 python myscript.py
 
+     or in arm mode by running::
+
+        arch -arm64 python myscript.py
+
      You can create an alias by adding the following line
 
-        alias python32="arch -i386 python"
+        alias pythonx86="arch -x86_64 python"
 
      into your .bashrc or .profile or ~/.bash_profile (or whatever file
      depending on which shell you are using.)

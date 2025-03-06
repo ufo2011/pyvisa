@@ -4,10 +4,11 @@
 
 This file is taken from the Lantz Project.
 
-:copyright: (c) 2014-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: (c) 2014-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 
 """
+
 import cmd
 from typing import List, Tuple
 
@@ -205,7 +206,7 @@ class VisaShell(cmd.Cmd):
 
         print(p.get_string(sortby="VISA name"))
 
-    def do_attr(self, args):  # noqa: C901
+    def do_attr(self, args):
         """Get or set the state for a visa attribute.
 
         List all attributes:
@@ -328,7 +329,7 @@ class VisaShell(cmd.Cmd):
 
         if not args:
             try:
-                charmap = {u"\r": "CR", u"\n": "LF", u"\r\n": "CRLF", u"\0": "NUL"}
+                charmap = {"\r": "CR", "\n": "LF", "\r\n": "CRLF", "\0": "NUL"}
                 chr = self.current.read_termination
                 if chr in charmap:
                     chr = charmap[chr]
@@ -349,10 +350,10 @@ class VisaShell(cmd.Cmd):
             )
         else:
             charmap = {
-                "CR": u"\r",
-                "LF": u"\n",
-                "CRLF": u"\r\n",
-                "NUL": u"\0",
+                "CR": "\r",
+                "LF": "\n",
+                "CRLF": "\r\n",
+                "NUL": "\0",
                 "None": None,
             }
             chr = args[0]

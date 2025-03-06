@@ -11,14 +11,7 @@
 # serve to show the default.
 
 import datetime
-import os
-import sys
-
-if sys.version_info >= (3, 8):
-    from importlib.metadata import version as get_version
-else:
-    from importlib_metadata import version as get_version
-
+from importlib.metadata import version as get_version
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -78,7 +71,7 @@ copyright = "%s, %s" % (this_year, author)
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
-exclude_patterns = []
+# exclude_patterns = []
 
 # The reST default role (used for this markup: `text`) to use for all documents.
 # default_role = None
@@ -184,14 +177,14 @@ htmlhelp_basename = "pyvisatdoc"
 
 # -- Options for LaTeX output --------------------------------------------------
 
-latex_elements = {
-    # The paper size ('letterpaper' or 'a4paper').
-    #'papersize': 'letterpaper',
-    # The font size ('10pt', '11pt' or '12pt').
-    #'pointsize': '10pt',
-    # Additional stuff for the LaTeX preamble.
-    #'preamble': '',
-}
+# latex_elements = {
+#     # The paper size ('letterpaper' or 'a4paper').
+#     #'papersize': 'letterpaper',
+#     # The font size ('10pt', '11pt' or '12pt').
+#     #'pointsize': '10pt',
+#     # Additional stuff for the LaTeX preamble.
+#     #'preamble': '',
+# }
 
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title, author, documentclass [howto/manual]).

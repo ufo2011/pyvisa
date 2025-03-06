@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Test pyvisa utility functions.
+"""Test pyvisa utility functions."""
 
-"""
 import array
 import contextlib
 import logging
@@ -14,15 +13,22 @@ import unittest
 from configparser import ConfigParser
 from functools import partial
 from io import StringIO
+from pathlib import Path
+from types import ModuleType
+from typing import Optional
 
 import pytest
+from pytest import LogCaptureFixture, MonkeyPatch
 
 from pyvisa import highlevel, util
 from pyvisa.ctwrapper import IVIVisaLibrary
 from pyvisa.testsuite import BaseTestCase
 
+np: Optional[ModuleType]
 try:
-    import numpy as np  # type: ignore
+    import numpy
+
+    np = numpy
 except ImportError:
     np = None
 
@@ -40,7 +46,7 @@ class TestConfigFile(BaseTestCase):
             ]
         ):
             raise unittest.SkipTest(
-                ".pyvisarc file exists cannot properly test in this case"
+                ".pyvisarc file exists; cannot properly test in this case"
             )
         self.temp_dir = tempfile.TemporaryDirectory()
         os.makedirs(os.path.join(self.temp_dir.name, "share", "pyvisa"))
@@ -51,6 +57,7 @@ class TestConfigFile(BaseTestCase):
         sys.prefix = self.temp_dir.name
         self._platform = sys.platform
         self._version_info = sys.version_info
+        util._ADDED_DLL_PATHS = set()
 
     def teardown_method(self):
         self.temp_dir.cleanup()
@@ -90,72 +97,137 @@ class TestConfigFile(BaseTestCase):
 
     # --- Test reading dll_extra_paths.
 
-    def test_reading_config_file_not_windows(self, caplog):
+    def test_reading_config_file_not_windows(self, caplog: LogCaptureFixture):
         sys.platform = "darwin"
-        sys.version_info = (3, 8, 1)
+        sys.version_info = (3, 12, 1)  # type: ignore[assignment]
+
         with caplog.at_level(level=logging.DEBUG):
             assert util.add_user_dll_extra_paths() is None
         assert "Not loading dll_extra_paths" in caplog.records[0].message
 
-    def test_reading_config_file_old_python(self, caplog):
+    def test_reading_config_file_for_dll_extra_paths(self, monkeypatch: MonkeyPatch):
         sys.platform = "win32"
-        sys.version_info = (3, 7, 1)
-        with caplog.at_level(level=logging.DEBUG):
-            assert util.add_user_dll_extra_paths() is None
-        assert "Not loading dll_extra_paths" in caplog.records[0].message
-
-    def test_reading_config_file_for_dll_extra_paths(self, monkeypatch):
-        sys.platform = "win32"
-        sys.version_info = (3, 8, 1)
+        extra_paths = [
+            r"C:\Program Files",
+            r"C:\Program Files (x86)",
+        ]
+        added_dll_directories: list[str] = []
         monkeypatch.setattr(
-            os, "add_dll_directory", lambda *args, **kwargs: "", raising=False
+            os,
+            "add_dll_directory",
+            lambda path: added_dll_directories.append(path),
+            raising=False,
         )
         config = ConfigParser()
         config["Paths"] = {}
         config["Paths"]["dll_extra_paths"] = r"C:\Program Files;C:\Program Files (x86)"
+
         with open(self.config_path, "w") as f:
             config.write(f)
-        assert util.add_user_dll_extra_paths() == [
+
+        assert util.add_user_dll_extra_paths() == extra_paths
+        assert added_dll_directories == extra_paths
+
+    def test_reading_config_file_for_dll_extra_paths_multiple_times(
+        self, monkeypatch: MonkeyPatch, caplog: LogCaptureFixture
+    ):
+        sys.platform = "win32"
+        sys.version_info = (3, 8, 1)  # type: ignore[assignment]
+
+        iter_count = 5
+        extra_paths = [
             r"C:\Program Files",
             r"C:\Program Files (x86)",
         ]
-
-    def test_no_section_for_dll_extra_paths(self, monkeypatch, caplog):
-        sys.platform = "win32"
-        sys.version_info = (3, 8, 1)
+        added_dll_directories: list[str] = []
         monkeypatch.setattr(
-            os, "add_dll_directory", lambda *args, **kwargs: "", raising=False
-        )
-        config = ConfigParser()
-        with open(self.config_path, "w") as f:
-            config.write(f)
-        with caplog.at_level(level=logging.DEBUG):
-            assert util.add_user_dll_extra_paths() is None
-        assert "NoOptionError or NoSectionError" in caplog.records[1].message
-
-    def test_no_key_for_dll_extra_paths(self, monkeypatch, caplog):
-        sys.platform = "win32"
-        sys.version_info = (3, 8, 1)
-        monkeypatch.setattr(
-            os, "add_dll_directory", lambda *args, **kwargs: "", raising=False
+            os,
+            "add_dll_directory",
+            lambda path: added_dll_directories.append(path),
+            raising=False,
         )
         config = ConfigParser()
         config["Paths"] = {}
+        config["Paths"]["dll_extra_paths"] = r"C:\Program Files;C:\Program Files (x86)"
+
         with open(self.config_path, "w") as f:
             config.write(f)
+
+        with caplog.at_level(level=logging.DEBUG):
+            for _ in range(iter_count):
+                assert util.add_user_dll_extra_paths() == extra_paths
+        skipping_log_messages = [
+            rec.message
+            for rec in caplog.records
+            if "already been added; skipping" in rec.message
+        ]
+        assert added_dll_directories == extra_paths
+        # one log message per path per iteration, except initial add
+        assert (iter_count - 1) * len(extra_paths) == len(skipping_log_messages)
+
+    def test_no_section_for_dll_extra_paths(
+        self, monkeypatch: MonkeyPatch, caplog: LogCaptureFixture
+    ):
+        sys.platform = "win32"
+        sys.version_info = (3, 8, 1)  # type: ignore[assignment]
+
+        added_dll_directories: list[str] = []
+        monkeypatch.setattr(
+            os,
+            "add_dll_directory",
+            lambda path: added_dll_directories.append(path),
+            raising=False,
+        )
+        config = ConfigParser()
+
+        with open(self.config_path, "w") as f:
+            config.write(f)
+
         with caplog.at_level(level=logging.DEBUG):
             assert util.add_user_dll_extra_paths() is None
         assert "NoOptionError or NoSectionError" in caplog.records[1].message
+        assert added_dll_directories == []
 
-    def test_no_config_file_for_dll_extra_paths(self, monkeypatch, caplog):
+    def test_no_key_for_dll_extra_paths(
+        self, monkeypatch: MonkeyPatch, caplog: LogCaptureFixture
+    ):
         sys.platform = "win32"
-        sys.version_info = (3, 8, 1)
+        added_dll_directories: list[str] = []
         monkeypatch.setattr(
-            os, "add_dll_directory", lambda *args, **kwargs: "", raising=False
+            os,
+            "add_dll_directory",
+            lambda path: added_dll_directories.append(path),
+            raising=False,
         )
+        config = ConfigParser()
+        config["Paths"] = {}
+
+        with open(self.config_path, "w") as f:
+            config.write(f)
+
+        with caplog.at_level(level=logging.DEBUG):
+            assert util.add_user_dll_extra_paths() is None
+        assert "NoOptionError or NoSectionError" in caplog.records[1].message
+        assert added_dll_directories == []
+
+    def test_no_config_file_for_dll_extra_paths(
+        self, monkeypatch: MonkeyPatch, caplog: LogCaptureFixture
+    ):
+        sys.platform = "win32"
+        sys.version_info = (3, 8, 1)  # type: ignore[assignment]
+
+        added_dll_directories: list[str] = []
+        monkeypatch.setattr(
+            os,
+            "add_dll_directory",
+            lambda path: added_dll_directories.append(path),
+            raising=False,
+        )
+
         with caplog.at_level(level=logging.DEBUG):
             assert util.add_user_dll_extra_paths() is None
         assert "No user defined" in caplog.records[0].message
+        assert added_dll_directories == []
 
 
 class TestParser(BaseTestCase):
@@ -210,9 +282,14 @@ class TestParser(BaseTestCase):
         for fmt in "d":
             msg = "block=%s, fmt=%s"
             msg = msg % ("ascii", fmt)
+
             # Test handling the case of a trailing comma
-            tb = lambda values: util.to_ascii_block(values, fmt, ",") + ","
-            fb = lambda block, cont: util.from_ascii_block(block, fmt, ",", cont)
+            def tb(values):
+                return util.to_ascii_block(values, fmt, ",") + ","
+
+            def fb(block, cont):
+                return util.from_ascii_block(block, fmt, ",", cont)
+
             self.round_trip_block_conversion(values, tb, fb, msg)
 
     def test_non_integer_ascii_block(self):
@@ -221,8 +298,13 @@ class TestParser(BaseTestCase):
         for fmt in "fFeEgG":
             msg = "block=%s, fmt=%s"
             msg = msg % ("ascii", fmt)
-            tb = lambda values: util.to_ascii_block(values, fmt, ",")
-            fb = lambda block, cont: util.from_ascii_block(block, fmt, ",", cont)
+
+            def tb(values):
+                return util.to_ascii_block(values, fmt, ",")
+
+            def fb(block, cont):
+                return util.from_ascii_block(block, fmt, ",", cont)
+
             self.round_trip_block_conversion(values, tb, fb, msg)
 
     def test_invalid_string_converter(self):
@@ -237,19 +319,25 @@ class TestParser(BaseTestCase):
         values = list(range(99))
         fmt = "d"
         msg = "block=ascii, fmt=%s" % fmt
-        tb = lambda values: util.to_ascii_block(values, fmt, ":".join)
-        fb = lambda block, cont: util.from_ascii_block(
-            block, fmt, lambda s: s.split(":"), cont
-        )
+
+        def tb(values):
+            return util.to_ascii_block(values, fmt, ":".join)
+
+        def fb(block, cont):
+            return util.from_ascii_block(block, fmt, lambda s: s.split(":"), cont)
+
         self.round_trip_block_conversion(values, tb, fb, msg)
 
     def test_function_converter(self):
         values = list(range(99))
         msg = "block=ascii"
-        tb = lambda values: util.to_ascii_block(values, str, ":".join)
-        fb = lambda block, cont: util.from_ascii_block(
-            block, int, lambda s: s.split(":"), cont
-        )
+
+        def tb(values):
+            return util.to_ascii_block(values, str, ":".join)
+
+        def fb(block, cont):
+            return util.from_ascii_block(block, int, lambda s: s.split(":"), cont)
+
         self.round_trip_block_conversion(values, tb, fb, msg)
 
     def test_integer_binary_block(self):
@@ -263,8 +351,13 @@ class TestParser(BaseTestCase):
                 for endi in (True, False):
                     msg = "block=%s, fmt=%s, endianness=%s"
                     msg = msg % (block, fmt, endi)
-                    tblock = lambda values: tb(values, fmt, endi)
-                    fblock = lambda block, cont: fb(block, fmt, endi, cont)
+
+                    def tblock(values):
+                        return tb(values, fmt, endi)
+
+                    def fblock(block, cont):
+                        return fb(block, fmt, endi, cont)
+
                     self.round_trip_block_conversion(values, tblock, fblock, msg)
 
     def test_noninteger_binary_block(self):
@@ -278,8 +371,13 @@ class TestParser(BaseTestCase):
                 for endi in (True, False):
                     msg = "block=%s, fmt=%s, endianness=%s"
                     msg = msg % (block, fmt, endi)
-                    tblock = lambda values: bytearray(tb(values, fmt, endi))
-                    fblock = lambda block, cont: fb(block, fmt, endi, cont)
+
+                    def tblock(values):
+                        return bytearray(tb(values, fmt, endi))
+
+                    def fblock(block, cont):
+                        return fb(block, fmt, endi, cont)
+
                     self.round_trip_block_conversion(values, tblock, fblock, msg)
 
     def test_bytes_binary_block(self):
@@ -289,10 +387,10 @@ class TestParser(BaseTestCase):
             (util.to_ieee_block, util.to_hp_block),
             (util.from_ieee_block, util.from_hp_block),
         ):
-            for fmt in "sp":
-                block = tb(values, datatype="s")
-                print(block)
-                rt = fb(block, datatype="s", container=bytes)
+            for fmt in "sbB":
+                block = tb(values, datatype=fmt)
+                print(fmt, block)
+                rt = fb(block, datatype=fmt, container=bytes)
                 assert values == rt
 
     def test_malformed_binary_block_header(self):
@@ -504,27 +602,29 @@ class TestSystemDetailsAnalysis(BaseTestCase):
         util.system_details_to_str(details)
 
 
-def generate_fakelibs(dirname):
-
-    for name, blob in zip(
-        [
-            "fakelib_bad_magic.dll",
-            "fakelib_good_32.dll",
-            "fakelib_good_64_2.dll",
-            "fakelib_good_64.dll",
-            "fakelib_good_unknown.dll",
-            "fakelib_not_pe.dll",
-        ],
-        [
-            struct.pack("=6sH52sl", b"MAPE\x00\x00", 0x014C, 52 * b"\0", 2),
-            struct.pack("=6sH52sl", b"MZPE\x00\x00", 0x014C, 52 * b"\0", 2),
-            struct.pack("=6sH52sl", b"MZPE\x00\x00", 0x8664, 52 * b"\0", 2),
-            struct.pack("=6sH52sl", b"MZPE\x00\x00", 0x0200, 52 * b"\0", 2),
-            struct.pack("=6sH52sl", b"MZPE\x00\x00", 0xFFFF, 52 * b"\0", 2),
-            struct.pack("=6sH52sl", b"MZDE\x00\x00", 0x014C, 52 * b"\0", 2),
-        ],
-    ):
-        with open(os.path.join(dirname, name), "wb") as f:
+def generate_fakelibs(dirname: Path):
+    libs = {
+        "fakelib_bad_magic.dll": struct.pack(
+            "=6sH52sl", b"MAPE\x00\x00", 0x014C, 52 * b"\0", 2
+        ),
+        "fakelib_good_x86_32.dll": struct.pack(
+            "=6sH52sl", b"MZPE\x00\x00", 0x014C, 52 * b"\0", 2
+        ),
+        "fakelib_good_x86_64.dll": struct.pack(
+            "=6sH52sl", b"MZPE\x00\x00", 0x8664, 52 * b"\0", 2
+        ),
+        "fakelib_good_arm_64.dll": struct.pack(
+            "=6sH52sl", b"MZPE\x00\x00", 0xAA64, 52 * b"\0", 2
+        ),
+        "fakelib_good_unknown.dll": struct.pack(
+            "=6sH52sl", b"MZPE\x00\x00", 0xFFFF, 52 * b"\0", 2
+        ),
+        "fakelib_not_pe.dll": struct.pack(
+            "=6sH52sl", b"MZDE\x00\x00", 0x014C, 52 * b"\0", 2
+        ),
+    }
+    for name, blob in libs.items():
+        with open(dirname / name, "wb") as f:
             f.write(blob)
             print("Written %s" % name)
 
@@ -532,53 +632,52 @@ def generate_fakelibs(dirname):
 class TestLibraryAnalysis(BaseTestCase):
     """Test (through monkey patching) the analysis of binary libraries."""
 
-    def test_get_shared_library_arch(self, tmpdir):
+    def test_get_shared_library_arch(self, tmp_path: Path):
         """Test analysing a library on Windows."""
-        dirname = str(tmpdir)
-        generate_fakelibs(dirname)
+        generate_fakelibs(tmp_path)
 
-        for f, a in zip(["_32", "_64", "_64_2"], ["I386", "IA64", "AMD64"]):
-            arch = util.get_shared_library_arch(
-                os.path.join(tmpdir, "fakelib_good%s.dll" % f)
-            )
+        for f, a in zip(
+            ["x86_32", "x86_64", "arm_64"],
+            [
+                util.PEMachineType.I386,
+                util.PEMachineType.AMD64,
+                util.PEMachineType.AARCH64,
+            ],
+        ):
+            arch = util.get_shared_library_arch(tmp_path / f"fakelib_good_{f}.dll")
             assert arch == a
 
-        arch = util.get_shared_library_arch(
-            os.path.join(dirname, "fakelib_good_unknown.dll")
-        )
-        assert arch == "UNKNOWN"
+        arch = util.get_shared_library_arch(tmp_path / "fakelib_good_unknown.dll")
+        assert arch == util.PEMachineType.UNKNOWN
 
         with pytest.raises(Exception) as e:
-            util.get_shared_library_arch(os.path.join(dirname, "fakelib_bad_magic.dll"))
+            util.get_shared_library_arch(tmp_path / "fakelib_bad_magic.dll")
         assert "Not an executable" in e.exconly()
 
         with pytest.raises(Exception) as e:
-            util.get_shared_library_arch(os.path.join(dirname, "fakelib_not_pe.dll"))
+            util.get_shared_library_arch(tmp_path / "fakelib_not_pe.dll")
         assert "Not a PE executable" in e.exconly()
 
-    def test_get_arch_windows(self, tmpdir):
+    def test_get_arch_windows(self, tmp_path: Path):
         """Test identifying the computer architecture on windows."""
-        dirname = str(tmpdir)
-        generate_fakelibs(dirname)
+        generate_fakelibs(tmp_path)
 
         platform = sys.platform
         sys.platform = "win32"
         try:
             for f, a in zip(
-                ["_32", "_64", "_64_2", "_unknown"], [(32,), (64,), (64,), ()]
+                ["x86_32", "x86_64", "arm_64", "_unknown"],
+                [
+                    [util.ArchitectureType.I386],
+                    [util.ArchitectureType.X86_64],
+                    [util.ArchitectureType.AARCH64],
+                    [],
+                ],
             ):
                 print(f, a)
-                path = os.path.join(dirname, "fakelib_good%s.dll" % f)
-                lib = util.LibraryPath(path)
+                path = tmp_path / f"fakelib_good_{f}.dll"
+                lib = util.LibraryPath(str(path))
                 assert lib.arch == a
-                if f != "_unknown":
-                    assert lib.is_32bit if 32 in a else not lib.is_32bit
-                    assert lib.is_64bit if 64 in a else not lib.is_64bit
-                    assert lib.bitness == ", ".join(str(b) for b in a)
-                else:
-                    assert lib.is_32bit == "n/a"
-                    assert lib.is_64bit == "n/a"
-                    assert lib.bitness == "n/a"
         finally:
             sys.platform = platform
 
@@ -597,19 +696,16 @@ class TestLibraryAnalysis(BaseTestCase):
             subprocess.run = alt_run
 
             for p, f, a in [
-                ("linux2", "32-bit", (32,)),
-                ("linux2", "32-bit & 64-bit", (32, 64)),
-                ("linux3", "64-bit", (64,)),
-                ("darwin", "(for architecture i386)", (32,)),
-                ("darwin", "(for architecture x86_64)", (64,)),
+                ("linux", "80386", [(util.ArchitectureType.I386)]),
+                ("linux", "x86-64", [(util.ArchitectureType.X86_64)]),
+                ("linux", "aarch64", [(util.ArchitectureType.AARCH64)]),
+                ("darwin", "executable i386", [(util.ArchitectureType.I386)]),
+                ("darwin", "executable x86_64", [(util.ArchitectureType.X86_64)]),
+                ("darwin", "executable arm64", [(util.ArchitectureType.AARCH64)]),
             ]:
                 sys.platform = p
                 lib = util.LibraryPath(f)
                 assert lib.arch == a
-                assert lib.is_32bit if 32 in a else not lib.is_32bit
-                assert lib.is_64bit if 64 in a else not lib.is_64bit
-                assert lib.bitness == ", ".join(str(b) for b in a)
-
         finally:
             sys.platform = platform
             subprocess.run = run
@@ -621,10 +717,7 @@ class TestLibraryAnalysis(BaseTestCase):
         try:
             sys.platform = "darwin"
             lib = util.LibraryPath("")
-            assert lib.arch == ()
-            assert lib.is_32bit == "n/a"
-            assert lib.is_64bit == "n/a"
-            assert lib.bitness == "n/a"
+            assert lib.arch == []
         finally:
             sys.platform = platform
             subprocess.run = run
@@ -636,10 +729,35 @@ class TestLibraryAnalysis(BaseTestCase):
         try:
             sys.platform = "test"
             lib = util.LibraryPath("")
-            assert lib.arch == ()
-            assert lib.is_32bit == "n/a"
-            assert lib.is_64bit == "n/a"
-            assert lib.bitness == "n/a"
+            assert lib.arch == []
         finally:
             sys.platform = platform
             subprocess.run = run
+
+
+class TestMessageSize(BaseTestCase):
+    """Test the message_size() function."""
+
+    @pytest.mark.parametrize(
+        "parameters, expected",
+        [
+            ((10, "h", "empty"), 21),
+            ((10, "h", "ieee"), 25),
+            ((10, "f", "hp"), 45),
+            ((10, "f", "empty"), 41),
+        ],
+    )
+    def test_message_size(self, parameters, expected):
+        """Test the functionality of the message_size() function."""
+        assert util.message_size(*parameters) == expected
+
+    def test_message_size_error(self):
+        """Verify that a bad header format value raises a ValueError"""
+        with pytest.raises(ValueError):
+            util.message_size(1, "f", "BAD VALUE")
+
+    def test_message_defaults(self):
+        """Verify that message_size() uses the expected point_size and header_format
+        default values."""
+        expected = util.message_size(num_points=100, datatype="f", header_format="ieee")
+        assert util.message_size(num_points=100) == expected

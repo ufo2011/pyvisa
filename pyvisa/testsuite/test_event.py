@@ -3,10 +3,11 @@
 
 This file is part of PyVISA.
 
-:copyright: 2019-2020 by PyVISA Authors, see AUTHORS for more details.
+:copyright: 2019-2024 by PyVISA Authors, see AUTHORS for more details.
 :license: MIT, see LICENSE for more details.
 
 """
+
 import logging
 
 import pytest
@@ -27,7 +28,6 @@ class TestEvent(BaseTestCase):
         Event._event_classes = self.old
 
     def test_register(self):
-
         assert Event._event_classes[constants.EventType.clear] is Event
 
     def test_double_register_event_cls(self, caplog):
@@ -51,7 +51,6 @@ class TestEvent(BaseTestCase):
         assert Event._event_classes[constants.EventType.exception] is not SubEvent
 
     def test_event_context(self):
-
         event = Event(None, constants.EventType.clear, 1)
         assert event.context == 1
 
